@@ -1,0 +1,46 @@
+{
+  "name": "narc-fantasy-football-companion-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:seed": "tsx --env-file-if-exists=.env.local src/db/seed-cli.ts",
+    "verify": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.json scripts/verify.ts"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^7.7.1",
+    "@neondatabase/serverless": "^1.1.0",
+    "drizzle-orm": "^0.44.7",
+    "next": "16.3.0",
+    "pg": "^8.23.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "ws": "^8.21.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.21.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.0",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.11",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  }
+}
