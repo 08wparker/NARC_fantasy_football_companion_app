@@ -63,7 +63,7 @@ export async function ensureSeasonScaffold(
   });
 
   const draftRounds = opts.draftRounds ?? prior?.draftRounds ?? 16;
-  const baseKeeperSlots = opts.baseKeeperSlots ?? prior?.baseKeeperSlots ?? 2;
+  const baseKeeperSlots = opts.baseKeeperSlots ?? prior?.baseKeeperSlots ?? 3;
   const isSnakeDraft = opts.isSnakeDraft ?? prior?.isSnakeDraft ?? true;
 
   await db

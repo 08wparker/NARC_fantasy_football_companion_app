@@ -40,14 +40,50 @@ Two environmental facts:
 ```bash
 npm run dev          # dev server
 npm run build        # production build
-npm test             # vitest — 91 tests, all against real Postgres (PGlite/WASM)
+npm test             # vitest — 119 tests, all against real Postgres (PGlite/WASM)
 npm run typecheck    # run `npx next typegen` first on a cold checkout
 npm run verify       # end-to-end checks against a REAL Postgres server
 npm run db:generate  # generate a migration from src/db/schema.ts
 npm run db:migrate   # apply migrations
 npm run db:seed      # idempotent: league, 12 teams, 4 seasons of picks
+npm run db:link      # manager seats from the CLI — see "Onboarding" below
 npm run db:studio    # drizzle studio
 ```
+
+## Onboarding managers
+
+A person becomes a manager by **claiming a seat**. Seats exist in
+`team_managers` from the seed with `user_id` NULL; on first sign-in
+`syncClerkUser` matches the Clerk email against `invite_email`
+(case-insensitively) and fills in `user_id`.
+
+So the only thing between a manager and access is an invite email. Set them on
+the commissioner page, or from the CLI:
+
+```bash
+npm run db:link -- --list                                          # who is where
+npm run db:link -- --email wparker@uchicago.edu --team WFP --commissioner
+npm run db:link -- --email tyler@example.com --team HULL
+```
+
+The CLI exists because the seat UI requires you to already *be* a commissioner,
+which is circular before anyone has claimed one. It also retro-links a user who
+has already signed in, so they don't have to sign out and back in.
+
+Two rules worth knowing:
+
+- **At most one seat per franchise per person.** A co-managed team has several
+  seats (BUES has two, because ESPN lists "Rob Buesing" and "Robert Buesing"
+  separately). If both carry the same invite email, only the first is claimed —
+  otherwise `team_managers_team_user_uq` rejects the write and 500s the sign-in,
+  and the franchise would end up holding two ballots.
+- **The last commissioner cannot be demoted, unlinked or deactivated.** Enforced
+  in `src/db/manager-service.ts`, not just the UI. Self-demotion is a real
+  workflow (hand the role to the LM, then step down) and doing those two steps in
+  the wrong order would lock the league out with no way back.
+
+A commissioner seat only counts if a live user holds it — an unclaimed or
+deactivated one confers nothing and does not satisfy the guard.
 
 ## Architecture
 
@@ -96,6 +132,10 @@ recompute from the ledger, and you get an identical database.**
   directly reachable, so `proxy.ts` does NOT protect them.
 - **`team_managers.user_id` is nullable.** That is what lets the commissioner
   populate and backfill the entire ledger before anyone else signs up.
+- **`users.email` is indexed but NOT unique.** Identity is `clerk_user_id`;
+  email is metadata Clerk owns and can change, and two Clerk accounts can share
+  an address. A unique index there turns that edge case into a 500 on sign-in.
+  Lookups by email refuse to guess when they find duplicates.
 
 ## Version gotchas (verified, not remembered)
 
@@ -132,3 +172,8 @@ rejected *by name*, since a foreign-key typo would otherwise look like a pass.
 
 `npm run verify` runs the same flows against a real Postgres server, which is
 where pooled-connection and transaction bugs actually live.
+
+`src/lib/auth/membership.test.ts` mocks Clerk's `auth()`/`currentUser()` to cover
+the sign-in path. It is worth keeping honest: it found two crashes that only
+appear with a real session — a duplicate-email collision on `users`, and a
+co-manager whose two seats shared an invite email.

@@ -1,5 +1,5 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { cache } from "react";
 
 import { db } from "@/db";
@@ -67,18 +67,46 @@ async function syncClerkUser() {
 
   if (email) {
     const league = await getLeague();
-    // Claim an unclaimed seat whose invite email matches. Case-insensitive,
+
+    // Claim unclaimed seats whose invite email matches. Case-insensitive,
     // because nobody types their email the same way twice.
-    await db
-      .update(schema.teamManagers)
-      .set({ userId: user.id })
-      .where(
-        and(
-          eq(schema.teamManagers.leagueId, league.id),
-          isNull(schema.teamManagers.userId),
-          sql`lower(${schema.teamManagers.inviteEmail}) = ${email}`,
-        ),
-      );
+    const candidates = await db.query.teamManagers.findMany({
+      where: and(
+        eq(schema.teamManagers.leagueId, league.id),
+        isNull(schema.teamManagers.userId),
+        sql`lower(${schema.teamManagers.inviteEmail}) = ${email}`,
+      ),
+      orderBy: (m, { asc }) => [asc(m.id)],
+    });
+
+    /**
+     * At most ONE seat per franchise.
+     *
+     * A co-managed team has several seats (BUES has two, because ESPN lists
+     * "Rob Buesing" and "Robert Buesing" as separate members). If both carry
+     * the same invite email — one human, two ESPN identities — claiming both
+     * would violate team_managers_team_user_uq and 500 the sign-in. Taking the
+     * first seat per team also keeps the franchise on a single ballot, which is
+     * the invariant the whole voting design rests on.
+     */
+    const seenTeams = new Set<number>();
+    const toClaim = candidates.filter((seat) => {
+      if (seenTeams.has(seat.teamId)) return false;
+      seenTeams.add(seat.teamId);
+      return true;
+    });
+
+    if (toClaim.length > 0) {
+      await db
+        .update(schema.teamManagers)
+        .set({ userId: user.id })
+        .where(
+          inArray(
+            schema.teamManagers.id,
+            toClaim.map((s) => s.id),
+          ),
+        );
+    }
   }
 
   return user;
@@ -92,7 +120,7 @@ async function syncClerkUser() {
  * Returns null when not signed in, so callers can choose between redirecting
  * and rendering a public view.
  */
-export const getMembership = cache(async (): Promise<Membership | null> => {
+export async function loadMembership(): Promise<Membership | null> {
   const user = await syncClerkUser();
   if (!user) return null;
 
@@ -113,7 +141,14 @@ export const getMembership = cache(async (): Promise<Membership | null> => {
     isCommissioner: seats.some((s) => s.leagueRole === "commissioner"),
     isUnlinked: seats.length === 0,
   };
-});
+}
+
+/**
+ * Request-scoped memo of loadMembership(). Split so tests can exercise the
+ * uncached implementation — React's cache() has no request scope under vitest,
+ * and a memoized result would leak across tests that each build a fresh database.
+ */
+export const getMembership = cache(loadMembership);
 
 /** Throws unless signed in AND linked to at least one franchise. */
 export async function requireLeagueMembership(): Promise<Membership> {

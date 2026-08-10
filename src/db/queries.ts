@@ -228,9 +228,28 @@ export async function latestSyncRun(db: DbOrTx, leagueId: number) {
 
 /** Manager seats nobody has claimed yet — the commissioner's invite worklist. */
 export async function unlinkedSeats(db: DbOrTx, leagueId: number) {
+  const seats = await allSeats(db, leagueId);
+  return seats.filter((s) => s.userId === null);
+}
+
+/**
+ * Every seat, claimed or not, ordered the way the league page lists teams.
+ * The commissioner needs to see claimed seats too — promoting Mike Sacks means
+ * acting on a seat that is already occupied.
+ */
+export async function allSeats(db: DbOrTx, leagueId: number) {
   const seats = await db.query.teamManagers.findMany({
     where: eq(schema.teamManagers.leagueId, leagueId),
     with: { team: true, user: true },
   });
-  return seats.filter((s) => s.userId === null);
+  return seats.sort(
+    (a, b) => a.team.espnTeamId - b.team.espnTeamId || a.id - b.id,
+  );
+}
+
+/** Everyone who has ever signed in — the pool for assigning an orphaned seat. */
+export async function allUsers(db: DbOrTx) {
+  return db.query.users.findMany({
+    orderBy: (u, { asc }) => [asc(u.displayName)],
+  });
 }

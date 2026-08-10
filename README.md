@@ -31,6 +31,7 @@ npm install
 cp .env.example .env.local     # then fill it in
 npm run db:migrate
 npm run db:seed
+npm run db:link -- --list      # see who holds which manager seat
 npm run dev
 ```
 
@@ -45,10 +46,23 @@ You need:
 The ledger has **no ESPN dependency** — everything except roster sync works
 before you ever paste a cookie.
 
+## Adding the other managers
+
+Someone claims their franchise by signing in with an email that matches the
+`invite_email` on their seat. Set those on the commissioner page, or:
+
+```bash
+npm run db:link -- --email tyler@example.com --team HULL
+```
+
+The CLI works with no session, which matters because the commissioner page
+requires you to already be a commissioner — circular before anyone has claimed
+a seat.
+
 ## Development
 
 ```bash
-npm test          # 91 tests against real Postgres (PGlite/WASM)
+npm test          # 119 tests against real Postgres (PGlite/WASM)
 npm run verify    # end-to-end checks against a real Postgres server
 npm run build
 ```

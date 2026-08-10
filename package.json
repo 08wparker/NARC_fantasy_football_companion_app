@@ -14,7 +14,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "db:seed": "tsx --env-file-if-exists=.env.local src/db/seed-cli.ts",
-    "verify": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.json scripts/verify.ts"
+    "verify": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.json scripts/verify.ts",
+    "db:link": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.json scripts/link-manager.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.7.1",

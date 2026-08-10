@@ -85,7 +85,12 @@ export const users = pgTable(
   },
   (t) => [
     uniqueIndex("users_clerk_user_id_uq").on(t.clerkUserId),
-    uniqueIndex("users_email_uq").on(t.email), // used for invite claim-by-email
+    // Deliberately NOT unique. Identity is clerk_user_id; email is descriptive
+    // metadata Clerk owns and can change, and two Clerk accounts can end up
+    // sharing an address. A unique index here turns that edge case into a 500
+    // on sign-in. Lookups by email (db:link, seat assignment) handle duplicates
+    // by refusing to guess.
+    index("users_email_idx").on(t.email),
   ],
 );
 
@@ -117,7 +122,7 @@ export const seasons = pgTable(
 
     // rules snapshot
     draftRounds: integer("draft_rounds").notNull().default(16),
-    baseKeeperSlots: integer("base_keeper_slots").notNull().default(2),
+    baseKeeperSlots: integer("base_keeper_slots").notNull().default(3),
     isSnakeDraft: boolean("is_snake_draft").notNull().default(true),
 
     // ESPN liveness

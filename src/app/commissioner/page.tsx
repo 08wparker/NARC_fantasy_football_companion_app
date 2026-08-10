@@ -1,7 +1,8 @@
+import { SeatControls } from "@/components/seat-controls";
 import { SyncButton } from "@/components/sync-button";
 import { Absent, Badge, Callout, Card, EmptyState } from "@/components/ui";
 import { db } from "@/db";
-import { latestSyncRun, seasonsForLeague, unlinkedSeats } from "@/db/queries";
+import { allSeats, allUsers, latestSyncRun, seasonsForLeague } from "@/db/queries";
 import { getMembership } from "@/lib/auth/membership";
 import { formatDate } from "@/lib/describe";
 import { currentSeasonYear, getLeague } from "@/lib/league";
@@ -14,9 +15,10 @@ export default async function CommissionerPage() {
   }
 
   const league = await getLeague();
-  const [seasons, seats, lastSync] = await Promise.all([
+  const [seasons, seats, users, lastSync] = await Promise.all([
     seasonsForLeague(db, league.id),
-    unlinkedSeats(db, league.id),
+    allSeats(db, league.id),
+    allUsers(db),
     latestSyncRun(db, league.id),
   ]);
 
@@ -100,21 +102,53 @@ export default async function CommissionerPage() {
       </Card>
 
       <Card
-        title="Manager seats awaiting sign-in"
-        subtitle="A seat is claimed automatically when someone signs in with a matching invite email."
+        title="Manager seats"
+        subtitle="Set an invite email and a manager claims their seat automatically on first sign-in. Everyone needs one."
       >
         {seats.length === 0 ? (
-          <EmptyState title="Every seat is claimed." />
+          <EmptyState title="No manager seats. Run the seed script." />
         ) : (
           <ul className="divide-y divide-border">
             {seats.map((s) => (
-              <li key={s.id} className="px-5 py-3 text-sm flex items-center gap-3 flex-wrap">
-                <Badge>{s.team.abbrev}</Badge>
-                <span>{s.displayNameOverride ?? "Unnamed manager"}</span>
-                {s.leagueRole === "commissioner" && <Badge tone="info">Commish</Badge>}
-                <span className="ml-auto text-muted">
-                  {s.inviteEmail ?? <span className="text-warning">no invite email set</span>}
-                </span>
+              <li key={s.id} className="px-5 py-4 space-y-2">
+                <div className="flex items-center gap-2 flex-wrap text-sm">
+                  <Badge>{s.team.abbrev}</Badge>
+                  <span className="font-medium">
+                    {s.displayNameOverride ?? s.user?.displayName ?? "Unnamed manager"}
+                  </span>
+                  {s.role === "co" && <span className="text-xs text-muted">co-manager</span>}
+                  {s.leagueRole === "commissioner" && <Badge tone="info">Commish</Badge>}
+                  {!s.isActive && <Badge tone="warning">inactive</Badge>}
+                  {s.user ? (
+                    <Badge tone="accent">signed in</Badge>
+                  ) : (
+                    <Badge tone="warning">not claimed</Badge>
+                  )}
+                  {s.user?.email && (
+                    <span className="text-xs text-muted">{s.user.email}</span>
+                  )}
+                </div>
+
+                <SeatControls
+                  seat={{
+                    id: s.id,
+                    teamAbbrev: s.team.abbrev,
+                    teamName: s.team.name,
+                    displayName: s.displayNameOverride,
+                    inviteEmail: s.inviteEmail,
+                    isCommissioner: s.leagueRole === "commissioner",
+                    isActive: s.isActive,
+                    role: s.role,
+                    user: s.user
+                      ? { id: s.user.id, displayName: s.user.displayName, email: s.user.email }
+                      : null,
+                  }}
+                  users={users.map((u) => ({
+                    id: u.id,
+                    displayName: u.displayName,
+                    email: u.email,
+                  }))}
+                />
               </li>
             ))}
           </ul>
