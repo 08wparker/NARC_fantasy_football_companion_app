@@ -168,6 +168,58 @@ describe("league rules enforced by the ledger", () => {
       ).rejects.toThrow(/cannot be traded separately from the player/i);
     });
 
+    it("rejects a keeper-slot trade", async () => {
+      const season = await db.query.seasons.findFirst({ where: eq(schema.seasons.year, 2027) });
+
+      await expect(
+        createTrade(db, member, {
+          leagueId,
+          loggedByTeamId: team.WFP.id,
+          currentYear: 2026,
+          assets: [
+            {
+              kind: "keeper_slot",
+              fromTeamId: team.WFP.id,
+              toTeamId: team.SACK.id,
+              seasonId: season!.id,
+              slotCount: 1,
+            },
+          ],
+        }),
+      ).rejects.toThrow(/keeper slots cannot be traded/i);
+    });
+
+    it("rejects a keeper slot smuggled into an otherwise legal trade", async () => {
+      const pick = await pickOf("WFP", 2027, 1);
+      const season = await db.query.seasons.findFirst({ where: eq(schema.seasons.year, 2027) });
+
+      await expect(
+        createTrade(db, member, {
+          leagueId,
+          loggedByTeamId: team.WFP.id,
+          currentYear: 2026,
+          assets: [
+            {
+              kind: "draft_pick",
+              fromTeamId: team.WFP.id,
+              toTeamId: team.SACK.id,
+              draftPickId: pick!.id,
+            },
+            {
+              kind: "keeper_slot",
+              fromTeamId: team.SACK.id,
+              toTeamId: team.WFP.id,
+              seasonId: season!.id,
+              slotCount: 1,
+            },
+          ],
+        }),
+      ).rejects.toThrow(/keeper slots cannot be traded/i);
+
+      // The legal half must not have been written either.
+      expect(await db.query.trades.findMany()).toHaveLength(0);
+    });
+
     it("allows trading the player itself", async () => {
       const player = await findOrCreatePlayerByName(db, "Bijan Robinson");
       const { trade } = await createTrade(db, member, {

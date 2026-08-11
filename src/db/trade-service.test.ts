@@ -232,7 +232,7 @@ describe("trade service", () => {
   });
 
   describe("mixed-asset trades", () => {
-    it("handles a pick, a slot swap and keeper slots in one trade", async () => {
+    it("handles a pick and a draft slot swap in one trade", async () => {
       const { trade } = await createTrade(db, wfp, {
         leagueId: fx.league.id,
         loggedByTeamId: fx.team.WFP.id,
@@ -248,13 +248,6 @@ describe("trade service", () => {
             fromTeamId: fx.team.WFP.id,
             toTeamId: fx.team.SACK.id,
             seasonId: fx.season.id,
-          },
-          {
-            kind: "keeper_slot",
-            fromTeamId: fx.team.SACK.id,
-            toTeamId: fx.team.WFP.id,
-            seasonId: fx.season.id,
-            slotCount: 1,
           },
         ],
       });

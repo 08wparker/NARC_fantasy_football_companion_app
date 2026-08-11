@@ -21,6 +21,7 @@ export const DEFAULT_RULES = [
   "The draft is 16 rounds, in snake order.",
   "Draft picks may only be traded for the current and next season. Picks two or more years out cannot be traded.",
   "Keeper rights cannot be traded separately from the player. If you trade the player, the keeper right goes with them.",
+  "Keeper slots cannot be traded. Every team keeps the same number.",
   "A rule change passes with two-thirds of all 12 franchises voting yes. Abstaining and not voting have the same effect as voting no.",
   "Trades are recorded in this app, not on ESPN. ESPN cannot represent a traded draft pick, so the ledger here is the authoritative record.",
   "A trade takes effect once the other side confirms it. The commissioner can void a confirmed trade, and the reason stays on the record.",

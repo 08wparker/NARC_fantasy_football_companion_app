@@ -79,9 +79,11 @@ export async function validateTradeAssets(
   }
 
   /**
-   * League rule: keeper rights never move on their own — they follow the
-   * player. The enum value survives so any historical row stays readable, but
-   * nothing new can be written with it.
+   * Neither flavour of keeper asset is tradeable.
+   *
+   * Rights follow the player; slots are fixed at 3 per team and cannot move at
+   * all. Both enum values survive so any historical row stays readable — only
+   * new ones are refused.
    */
   if (assets.some((a) => a.kind === "keeper_right")) {
     issues.push({
@@ -89,6 +91,13 @@ export async function validateTradeAssets(
       message:
         "Keeper rights cannot be traded separately from the player. Trade the player instead — " +
         "the keeper right follows them.",
+    });
+  }
+
+  if (assets.some((a) => a.kind === "keeper_slot")) {
+    issues.push({
+      severity: "error",
+      message: "Keeper slots cannot be traded. Every team keeps the same number.",
     });
   }
 

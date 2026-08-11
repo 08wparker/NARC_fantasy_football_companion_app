@@ -19,14 +19,12 @@ export type BuilderPick = {
 type Row =
   | { key: string; kind: "draft_pick"; fromTeamId: number; toTeamId: number; draftPickId: number | "" }
   | { key: string; kind: "player"; fromTeamId: number; toTeamId: number; playerName: string }
-  | { key: string; kind: "draft_slot_swap"; fromTeamId: number; toTeamId: number; seasonId: number | "" }
   | {
       key: string;
-      kind: "keeper_slot";
+      kind: "draft_slot_swap";
       fromTeamId: number;
       toTeamId: number;
       seasonId: number | "";
-      slotCount: number;
     };
 
 let rowCounter = 0;
@@ -102,16 +100,7 @@ export function TradeBuilder({
         ? { key: newKey(), kind, fromTeamId: defaultFrom, toTeamId: defaultTo, draftPickId: "" }
         : kind === "player"
           ? { key: newKey(), kind, fromTeamId: defaultFrom, toTeamId: defaultTo, playerName: "" }
-        : kind === "draft_slot_swap"
-          ? { key: newKey(), kind, fromTeamId: defaultFrom, toTeamId: defaultTo, seasonId: "" }
-          : {
-              key: newKey(),
-              kind,
-              fromTeamId: defaultFrom,
-              toTeamId: defaultTo,
-              seasonId: "",
-              slotCount: 1,
-            },
+          : { key: newKey(), kind, fromTeamId: defaultFrom, toTeamId: defaultTo, seasonId: "" },
     ]);
 
   const removeRow = (key: string) => setRows((rs) => rs.filter((r) => r.key !== key));
@@ -136,20 +125,11 @@ export function TradeBuilder({
           playerName: r.playerName.trim(),
         };
       }
-      if (r.kind === "draft_slot_swap") {
-        return {
-          kind: "draft_slot_swap" as const,
-          fromTeamId: r.fromTeamId,
-          toTeamId: r.toTeamId,
-          seasonId: Number(r.seasonId),
-        };
-      }
       return {
-        kind: "keeper_slot" as const,
+        kind: "draft_slot_swap" as const,
         fromTeamId: r.fromTeamId,
         toTeamId: r.toTeamId,
         seasonId: Number(r.seasonId),
-        slotCount: r.slotCount,
       };
     });
 
@@ -331,7 +311,7 @@ export function TradeBuilder({
                   </label>
                 )}
 
-                {(r.kind === "draft_slot_swap" || r.kind === "keeper_slot") && (
+                {r.kind === "draft_slot_swap" && (
                   <label className="flex flex-col gap-1">
                     <span className="text-xs text-muted">Season</span>
                     <select
@@ -349,18 +329,6 @@ export function TradeBuilder({
                   </label>
                 )}
 
-                {r.kind === "keeper_slot" && (
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-muted">Slots</span>
-                    <input
-                      type="number"
-                      min={1}
-                      className={input}
-                      value={r.slotCount}
-                      onChange={(e) => update(r.key, { slotCount: Number(e.target.value) })}
-                    />
-                  </label>
-                )}
               </div>
             </div>
           );
@@ -368,7 +336,7 @@ export function TradeBuilder({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {(["draft_pick", "player", "draft_slot_swap", "keeper_slot"] as const).map((kind) => (
+        {(["draft_pick", "player", "draft_slot_swap"] as const).map((kind) => (
           <button
             key={kind}
             onClick={() => addRow(kind)}
