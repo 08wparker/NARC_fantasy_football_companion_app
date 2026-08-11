@@ -10,11 +10,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # NARC Fantasy Football Companion
 
-Companion app for a 12-team ESPN keeper league (leagueId `718396`). Two jobs:
+Companion app for the North Adams Rowing Club, a 12-team ESPN keeper league
+(leagueId `718396`). Two jobs:
 
-1. **Remember draft-asset trades across seasons** — future round picks, draft
-   slot swaps, keeper rights/slots, and player-for-pick.
-2. **Run rule-change votes.**
+1. **Remember trades that affect a future draft** — round picks, draft slot
+   swaps, and players.
+2. **Run the rulebook** — standing rules plus rule-change votes.
+
+Live at <https://narc-fantasy-football.vercel.app>.
 
 ## Why this app exists
 
@@ -40,7 +43,7 @@ Two environmental facts:
 ```bash
 npm run dev          # dev server
 npm run build        # production build
-npm test             # vitest — 144 tests, all against real Postgres (PGlite/WASM)
+npm test             # vitest — 146 tests, all against real Postgres (PGlite/WASM)
 npm run typecheck    # run `npx next typegen` first on a cold checkout
 npm run verify       # end-to-end checks against a REAL Postgres server
 npm run db:generate  # generate a migration from src/db/schema.ts
@@ -49,6 +52,24 @@ npm run db:seed      # idempotent: league, 12 teams, tradeable seasons, rulebook
 npm run db:link      # manager seats from the CLI — see "Onboarding" below
 npm run db:studio    # drizzle studio
 ```
+
+## What can and cannot be traded
+
+The league's rules are enforced in `validateTradeAssets`
+(`src/db/trade-logic.ts`), not merely documented:
+
+| Asset | Tradeable | Why |
+|---|---|---|
+| `draft_pick` | yes, current + next season only | Picks further out are never scaffolded, so they cannot be picked by accident |
+| `player` | yes | Keeper rights travel with them implicitly |
+| `draft_slot_swap` | yes | Exchanges two teams' board positions for a season |
+| `keeper_right` | **no** | Rights follow the player; they never move alone |
+| `keeper_slot` | **no** | Every team keeps the same number |
+
+Both keeper enum values survive so historical rows stay readable — only new
+writes are refused. Rejection happens before the insert, so a banned asset
+smuggled into an otherwise legal multi-asset trade rejects the *whole* trade
+rather than silently dropping one leg.
 
 ## Onboarding managers
 
@@ -92,16 +113,21 @@ recompute from the ledger, and you get an identical database.**
 
 | Layer | Source of truth | Mutability |
 |---|---|---|
-| ESPN mirror — `teams`, `team_seasons`, `espn_members`, `players`, `roster_spots`, `sync_runs` | ESPN | upsert-only, never deleted, never hand-edited |
-| Ledger — `trades`, `trade_assets`, `trade_events`, `proposals`, `votes` | this app | append-only + status transitions |
+| ESPN mirror — `teams`, `team_seasons`, `espn_members`, `players`, `roster_spots`, `espn_transactions`, `sync_runs` | ESPN | upsert-only, never deleted, never hand-edited |
+| Ledger — `trades`, `trade_assets`, `trade_events`, `proposals`, `votes`, `rules` | this app | append-only + status transitions |
 | Derived — `draft_picks.current_owner_team_id`, `draft_order.current_team_id` | computed | rebuildable from scratch |
 
 ### Key files
 
 - `src/db/schema.ts` — the whole model, with integrity pushed into Postgres
 - `src/db/derive.ts` — `rebuildDerivedState`, the correctness core
+- `src/db/trade-logic.ts` — asset shapes and the league's trade rules
 - `src/db/trade-service.ts` — the trade state machine
 - `src/db/proposal-service.ts` — voting and tallying
+- `src/db/rules-service.ts` — the rulebook, and `DEFAULT_RULES`
+- `src/db/manager-service.ts` — seats, roles, last-commissioner guard
+- `src/db/player-service.ts` — find-or-create players by name
+- `src/db/picks.ts` — season scaffolding and the trade horizon
 - `src/db/queries.ts` — draft board (snake math), provenance, history
 - `src/lib/espn/{client,sync}.ts` — the mirror
 - `src/lib/auth/membership.ts` — the single authorization entry point
@@ -138,13 +164,11 @@ recompute from the ledger, and you get an identical database.**
   appear in the trade builder by accident. `pruneSeasonsBeyondHorizon` refuses to
   delete a season any trade asset references, since the cascade would orphan
   `trade_assets.draft_pick_id` and silently rewrite history.
-- **Keeper rights cannot be traded alone.** The `keeper_right` enum value stays
-  so historical rows remain readable, but `validateTradeAssets` rejects any new
-  one — the right follows the player.
 - **`players.espn_player_id` is nullable.** The commissioner types a player's
   name when backfilling an old trade, long before any ESPN sync. Postgres treats
   NULLs as distinct, so any number of un-synced players coexist under the unique
-  index; a later sync matches on name and fills in the id.
+  index; a later sync matches on name and fills in the id. Name matching is case-
+  and whitespace-insensitive so one player does not become three.
 - **Backfilled trades skip counterparty confirmation.** `createTrade({backfill})`
   is commissioner-only, requires the real `agreedOn` date, and lands `confirmed`.
   Two-step confirmation exists to stop one manager unilaterally asserting a
@@ -180,10 +204,38 @@ recompute from the ledger, and you get an identical database.**
 
 `src/db/index.ts` picks a driver from `DATABASE_URL`:
 - Neon host → `drizzle-orm/neon-serverless` (WebSocket pool). **Not `neon-http`**,
-  which cannot do interactive transactions.
+  which cannot do interactive transactions, and every trade transition needs a
+  real one.
 - Anything else → `drizzle-orm/node-postgres`, so local Postgres works.
 
 Connection is lazy so `next build` doesn't need a live database.
+
+## Deployment
+
+Vercel project `narc-fantasy-football`, connected to the GitHub repo — **pushing
+to `main` auto-deploys**. Postgres is Neon, provisioned through the Vercel
+marketplace integration, one database shared by all three environments.
+
+Env vars live in Vercel for Production and Development. **Preview is not set** —
+PR previews will fail Clerk until someone adds them in the dashboard.
+
+Schema changes go out in two steps, and the order matters:
+
+```bash
+npm run db:generate                       # commit the migration
+DATABASE_URL="<neon pooled url>" npx drizzle-kit migrate
+vercel --prod --yes
+```
+
+Migrate before deploying, or the new code meets the old schema.
+
+Careful: `vercel integration add` **overwrites `.env.local`** and drops anything
+it does not manage, including the Clerk keys. Back it up before running one.
+
+Clerk runs on a **development** instance (`pk_test_`/`sk_test_`). That is normal
+for a `*.vercel.app` domain, since a production instance needs DNS records on a
+custom domain. Consequence: a dev banner and a 100-user cap, both irrelevant at
+12 managers.
 
 ## Testing
 
@@ -199,3 +251,13 @@ where pooled-connection and transaction bugs actually live.
 the sign-in path. It is worth keeping honest: it found two crashes that only
 appear with a real session — a duplicate-email collision on `users`, and a
 co-manager whose two seats shared an invite email.
+
+## Known gaps
+
+- **2025-26 trade history is not imported.** Needs `espn_s2`/`SWID`. When it
+  happens, read the `kona_league_communication` activity feed (msgId `244` =
+  TRADED, carrying `from`/`to`/`targetId`) — **not** `mTransactions2`, whose
+  `TRADE_ACCEPT` rows have no `items` array. Until then the commissioner enters
+  past trades by hand with the backfill toggle.
+- **Preview-environment env vars are unset** (see Deployment).
+- **No favicon** from the Eph mark yet.
