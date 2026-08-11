@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "db:seed": "tsx --env-file-if-exists=.env.local src/db/seed-cli.ts",
     "verify": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.json scripts/verify.ts",
+    "espn:check": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.json scripts/espn-check.ts",
     "db:link": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.json scripts/link-manager.ts"
   },
   "dependencies": {

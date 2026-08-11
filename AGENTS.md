@@ -46,6 +46,7 @@ npm run build        # production build
 npm test             # vitest — 146 tests, all against real Postgres (PGlite/WASM)
 npm run typecheck    # run `npx next typegen` first on a cold checkout
 npm run verify       # end-to-end checks against a REAL Postgres server
+npm run espn:check   # are the espn_s2/SWID cookies still good? `-- --year 2025`
 npm run db:generate  # generate a migration from src/db/schema.ts
 npm run db:migrate   # apply migrations
 npm run db:seed      # idempotent: league, 12 teams, tradeable seasons, rulebook
@@ -210,6 +211,25 @@ recompute from the ledger, and you get an identical database.**
 
 Connection is lazy so `next build` doesn't need a live database.
 
+## Shipping a change
+
+The default workflow, not something to ask about each time:
+
+1. **Verify locally first** — tests, typecheck, and actually exercise the thing.
+2. **Commit and push to `main`.** That is the deploy trigger; there is no
+   separate release step.
+3. **Wait for the Vercel deploy to finish**, then **open
+   <https://narc-fantasy-football.vercel.app/> in the Chrome browser extension
+   and confirm the change works in production.** The extension carries a real
+   signed-in Clerk session, which is the only way to reach commissioner-gated UI
+   — a local dev server cannot check those paths without someone signing in.
+4. If production is broken, fix forward or revert; don't leave `main` red.
+
+Two things that still need explicit sign-off, because they are not reversible by
+a follow-up commit: **database migrations** (see below — migrate *before* the
+deploy lands) and anything that **writes to the shared Neon database**, since
+Production, Preview and Development all point at the same one.
+
 ## Deployment
 
 Vercel project `narc-fantasy-football`, connected to the GitHub repo — **pushing
@@ -247,6 +267,12 @@ rejected *by name*, since a foreign-key typo would otherwise look like a pass.
 `npm run verify` runs the same flows against a real Postgres server, which is
 where pooled-connection and transaction bugs actually live.
 
+Nothing in `npm test` touches the network — `fetchLeague` is mocked. `npm run
+espn:check` is the one thing that makes a real ESPN call: it hits the same
+`fetchLeague` the sync uses, touches no database, and tells you whether the
+cookies still authenticate. Run it first whenever a sync 401s, since expired
+cookies and a genuine sync bug look identical from the UI.
+
 `src/lib/auth/membership.test.ts` mocks Clerk's `auth()`/`currentUser()` to cover
 the sign-in path. It is worth keeping honest: it found two crashes that only
 appear with a real session — a duplicate-email collision on `users`, and a
@@ -254,10 +280,13 @@ co-manager whose two seats shared an invite email.
 
 ## Known gaps
 
-- **2025-26 trade history is not imported.** Needs `espn_s2`/`SWID`. When it
-  happens, read the `kona_league_communication` activity feed (msgId `244` =
-  TRADED, carrying `from`/`to`/`targetId`) — **not** `mTransactions2`, whose
-  `TRADE_ACCEPT` rows have no `items` array. Until then the commissioner enters
-  past trades by hand with the backfill toggle.
+- **2025-26 trade history is not imported.** No longer blocked on credentials —
+  `espn_s2`/`SWID` are set in `.env.local` and in Vercel Production/Development,
+  and `npm run espn:check -- --year 2025` confirms 2024 and 2025 both read back
+  fine. What remains is the importer itself: read the
+  `kona_league_communication` activity feed (msgId `244` = TRADED, carrying
+  `from`/`to`/`targetId`) — **not** `mTransactions2`, whose `TRADE_ACCEPT` rows
+  have no `items` array. Until it exists the commissioner enters past trades by
+  hand with the backfill toggle.
 - **Preview-environment env vars are unset** (see Deployment).
 - **No favicon** from the Eph mark yet.

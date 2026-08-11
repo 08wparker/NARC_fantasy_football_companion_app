@@ -98,6 +98,7 @@ git push          # or: vercel --prod --yes
 ```bash
 npm test          # 146 tests against real Postgres (PGlite/WASM)
 npm run verify    # end-to-end checks against a real Postgres server
+npm run espn:check  # confirm the ESPN cookies still authenticate
 npm run build
 ```
 
