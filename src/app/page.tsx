@@ -43,7 +43,9 @@ export default async function HomePage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{league.name}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {league.name} <span className="text-muted font-normal">· North Adams Rowing Club</span>
+        </h1>
         <p className="text-muted mt-1">
           The record of everything ESPN forgets: traded picks, slot swaps, keeper rights.
         </p>

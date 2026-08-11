@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import { Suspense } from "react";
 
+import { Logo } from "@/components/logo";
 import { MembershipBadge } from "@/components/membership-badge";
 
 import "./globals.css";
@@ -12,7 +13,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "NARC Fantasy Football",
+  title: "NARC — North Adams Rowing Club",
   description: "Draft-pick ledger and rule votes for the NARC keeper league",
 };
 
@@ -35,8 +36,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <ClerkProvider>
           <header className="border-b border-border bg-surface/60 backdrop-blur sticky top-0 z-20">
             <div className="mx-auto max-w-6xl px-4 h-14 flex items-center gap-6">
-              <Link href="/" className="font-semibold tracking-tight shrink-0">
-                <span className="text-accent">NARC</span> Fantasy
+              <Link href="/" className="flex items-center gap-2.5 shrink-0 group">
+                <Logo className="h-8 w-auto" title="NARC — North Adams Rowing Club" />
+                <span className="leading-none">
+                  <span className="block font-semibold tracking-tight text-accent">NARC</span>
+                  <span className="hidden sm:block text-[11px] text-muted tracking-wide">
+                    North Adams Rowing Club
+                  </span>
+                </span>
               </Link>
 
               <nav className="flex items-center gap-1 text-sm overflow-x-auto">
@@ -79,7 +86,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-8">{children}</main>
 
           <footer className="border-t border-border py-6 text-center text-xs text-muted">
-            Draft picks, slot swaps and keeper rights live here because ESPN cannot track them.
+            North Adams Rowing Club · draft picks, slot swaps and keeper rights live here because ESPN cannot track them.
           </footer>
         </ClerkProvider>
       </body>

@@ -1,22 +1,29 @@
 @import "tailwindcss";
 
 /**
- * Dark-first, because this gets opened on a phone in a group chat argument.
- * One accent (field green) plus semantic status colors; everything else is
- * neutral so the data reads first.
+ * Williams College purple and gold — the league is the North Adams Rowing Club,
+ * and the Eph is a purple cow.
+ *
+ * Gold is the ACCENT rather than purple, deliberately: purple is the field here,
+ * so a purple button would disappear into it. Gold also takes dark text at a
+ * comfortable contrast ratio, which keeps the existing `text-background` pattern
+ * on primary buttons working.
+ *
+ * Warning is orange rather than the usual amber, so it can't be mistaken for the
+ * gold accent — "traded pick" and "needs attention" have to stay distinguishable.
  */
 :root {
-  --background: #0b0f14;
-  --surface: #131a22;
-  --surface-2: #1a232d;
-  --border: #26313d;
-  --foreground: #e8edf2;
-  --muted: #8b9aab;
-  --accent: #35d07f;
-  --accent-dim: #1f7f4d;
-  --warning: #f0b429;
-  --danger: #f2635f;
-  --info: #5aa9e6;
+  --background: #17102A;
+  --surface: #211838;
+  --surface-2: #2D2148;
+  --border: #3D2D5C;
+  --foreground: #EFEAF7;
+  --muted: #A99DC4;
+  --accent: #FFC72C;
+  --accent-dim: #B8901A;
+  --warning: #E8833A;
+  --danger: #F2635F;
+  --info: #9B8BE8;
 }
 
 @theme inline {
