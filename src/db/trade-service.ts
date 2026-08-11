@@ -61,6 +61,18 @@ export async function createTrade(
     assets: TradeAssetInput[];
     agreedOn?: Date | null;
     note?: string | null;
+    currentYear?: number;
+    /**
+     * Commissioner-only: record a trade that already happened as immediately
+     * confirmed, rather than sending it to the counterparty for approval.
+     *
+     * This is how last season's trades get into the ledger. The two-step
+     * confirmation exists to stop one manager unilaterally asserting a trade —
+     * it is meaningless for a trade everyone already played out months ago, and
+     * chasing eleven people for retroactive approval would mean the historical
+     * record simply never gets entered.
+     */
+    backfill?: boolean;
   },
 ) {
   if (!actor.teamIds.includes(input.loggedByTeamId) && !actor.isCommissioner) {
@@ -72,22 +84,39 @@ export async function createTrade(
     throw new TradeError("You must be a party to a trade to log it.");
   }
 
-  const issues = await validateTradeAssets(db, input.leagueId, input.assets);
+  if (input.backfill && !actor.isCommissioner) {
+    throw new TradeError("Only the commissioner can record a trade as already agreed.");
+  }
+  if (input.backfill && !input.agreedOn) {
+    throw new TradeError("A backfilled trade needs the date it was originally agreed.");
+  }
+
+  const issues = await validateTradeAssets(db, input.leagueId, input.assets, {
+    currentYear: input.currentYear,
+  });
   const errors = issues.filter((i) => i.severity === "error");
   if (errors.length > 0) {
     throw new TradeError(errors.map((e) => e.message).join(" "));
   }
 
   return db.transaction(async (tx) => {
+    const now = new Date();
     const [trade] = await tx
       .insert(schema.trades)
       .values({
         leagueId: input.leagueId,
-        status: "pending",
+        status: input.backfill ? "confirmed" : "pending",
         loggedByUserId: actor.userId,
         loggedByTeamId: input.loggedByTeamId,
         agreedOn: input.agreedOn ?? null,
         note: input.note ?? null,
+        ...(input.backfill
+          ? {
+              confirmedAt: input.agreedOn ?? now,
+              confirmedByUserId: actor.userId,
+              confirmedByCommissioner: true,
+            }
+          : {}),
       })
       .returning();
 
@@ -111,16 +140,31 @@ export async function createTrade(
     await tx.insert(schema.tradeEvents).values({
       tradeId: trade.id,
       action: "created",
-      toStatus: "pending",
+      toStatus: input.backfill ? "confirmed" : "pending",
       actorUserId: actor.userId,
       actorTeamId: input.loggedByTeamId,
-      actedAsCommissioner: actor.isCommissioner && !actor.teamIds.includes(input.loggedByTeamId),
-      note: input.note ?? null,
+      actedAsCommissioner:
+        Boolean(input.backfill) ||
+        (actor.isCommissioner && !actor.teamIds.includes(input.loggedByTeamId)),
+      note: input.backfill
+        ? `Backfilled by the commissioner as already agreed.${input.note ? ` ${input.note}` : ""}`
+        : (input.note ?? null),
       snapshot: assetRows,
     });
 
+    const warnings = issues.filter((i) => i.severity === "warning").map((w) => ({
+      kind: "pick_not_owned_by_sender" as const,
+      message: w.message,
+    }));
+
+    if (input.backfill) {
+      // A backfilled trade is confirmed on arrival, so derived state moves now.
+      const derived = await rebuildAffected(tx as unknown as Db, assetRows);
+      return { trade, assets: assetRows, warnings: [...warnings, ...derived] };
+    }
+
     // Pending trades change nothing derived — no rebuild here on purpose.
-    return { trade, assets: assetRows, warnings: issues.filter((i) => i.severity === "warning") };
+    return { trade, assets: assetRows, warnings };
   });
 }
 

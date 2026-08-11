@@ -1,3 +1,4 @@
+import { AddRuleForm, RuleRow } from "@/components/rule-controls";
 import {
   CloseVotingButton,
   NewProposalForm,
@@ -9,6 +10,7 @@ import { Badge, Callout, Card, EmptyState } from "@/components/ui";
 import { db } from "@/db";
 import { tallyVotes } from "@/db/proposal-service";
 import { proposalsForLeague } from "@/db/queries";
+import { listRules } from "@/db/rules-service";
 import { getMembership } from "@/lib/auth/membership";
 import { formatDate } from "@/lib/describe";
 import { getLeague } from "@/lib/league";
@@ -26,7 +28,10 @@ export default async function RulesPage() {
   const membership = await getMembership();
   const canAct = membership && !membership.isUnlinked;
 
-  const proposals = await proposalsForLeague(db, league.id);
+  const [proposals, rules] = await Promise.all([
+    proposalsForLeague(db, league.id),
+    listRules(db, league.id),
+  ]);
   const teamCount = league.teamCount;
 
   const order = { open: 0, draft: 1, passed: 2, failed: 3, withdrawn: 4 } as const;
@@ -36,9 +41,9 @@ export default async function RulesPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Rule changes</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Rules</h1>
           <p className="text-muted mt-1">
-            Anyone can propose. The commissioner opens the ballot.
+            The league rulebook, and any changes currently up for a vote.
           </p>
         </div>
         {canAct && (
@@ -46,6 +51,41 @@ export default async function RulesPage() {
             <NewProposalForm />
           </div>
         )}
+      </div>
+
+      <Card
+        title="League rules"
+        subtitle="The current rulebook. The commissioner keeps this up to date."
+        action={membership?.isCommissioner ? <AddRuleForm /> : undefined}
+      >
+        {rules.length === 0 ? (
+          <EmptyState
+            title="No rules recorded yet."
+            hint="Run the seed script, or add them here."
+          />
+        ) : (
+          <ol className="divide-y divide-border">
+            {rules.map((r, i) => (
+              <li key={r.id} className="px-5 py-3 flex gap-3">
+                <span className="tnum text-muted text-sm w-5 shrink-0">{i + 1}.</span>
+                <div className="flex-1">
+                  {membership?.isCommissioner ? (
+                    <RuleRow rule={{ id: r.id, body: r.body }} index={i} total={rules.length} />
+                  ) : (
+                    <p className="text-sm">{r.body}</p>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </Card>
+
+      <div className="pt-2">
+        <h2 className="text-lg font-semibold tracking-tight">Proposed changes</h2>
+        <p className="text-muted text-sm mt-1">
+          Anyone can propose. The commissioner opens the ballot.
+        </p>
       </div>
 
       <Callout tone="neutral">

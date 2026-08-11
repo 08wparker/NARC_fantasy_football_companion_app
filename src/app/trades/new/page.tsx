@@ -25,7 +25,7 @@ export default async function NewTradePage() {
     );
   }
 
-  const [teams, seasons, picks] = await Promise.all([
+  const [teams, seasons, picks, players] = await Promise.all([
     db.query.teams.findMany({
       where: eq(schema.teams.leagueId, league.id),
       orderBy: (t, { asc }) => [asc(t.espnTeamId)],
@@ -34,6 +34,7 @@ export default async function NewTradePage() {
     db.query.draftPicks.findMany({
       with: { season: true, originalTeam: true },
     }),
+    db.query.players.findMany({ orderBy: (p, { asc }) => [asc(p.fullName)], limit: 500 }),
   ]);
 
   return (
@@ -51,6 +52,8 @@ export default async function NewTradePage() {
       <Card>
         <div className="p-5">
           <TradeBuilder
+            isCommissioner={membership.isCommissioner}
+            knownPlayers={players.map((p) => p.fullName)}
             myTeamIds={membership.isCommissioner ? teams.map((t) => t.id) : membership.teamIds}
             teams={teams.map((t) => ({ id: t.id, abbrev: t.abbrev, name: t.name }))}
             seasons={seasons.map((s) => ({ id: s.id, year: s.year }))}

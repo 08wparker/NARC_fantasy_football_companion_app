@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt, or } from "drizzle-orm";
 
 import * as schema from "./schema";
 import type { DbOrTx } from "./types";
@@ -6,11 +6,12 @@ import type { DbOrTx } from "./types";
 /**
  * How many future seasons of picks exist to be traded.
  *
- * ESPN itself supports no future-year pick trading at all, so this limit is
- * purely ours. Three years is the practical ceiling for keeper-league pick talk
- * and stops the pick table filling with noise nobody will ever trade.
+ * ONE, because the league rule is that you may not trade a pick beyond the next
+ * season. This is not a technical limit — it is the rulebook expressed in the
+ * schema, so a pick nobody is allowed to trade never gets created in the first
+ * place and cannot show up in the trade builder by accident.
  */
-export const FUTURE_SEASON_HORIZON = 3;
+export const FUTURE_SEASON_HORIZON = 1;
 
 export function maxScaffoldableYear(currentYear: number) {
   return currentYear + FUTURE_SEASON_HORIZON;
@@ -135,4 +136,55 @@ export async function ensureRollingWindow(
     seasons.push(await ensureSeasonScaffold(db, { ...opts, year }));
   }
   return seasons;
+}
+
+/**
+ * Remove future seasons that sit beyond the horizon.
+ *
+ * Needed because the horizon shrank from three years to one: 2028 and 2029 were
+ * already scaffolded under the old rule and would otherwise linger on the draft
+ * board as years nobody is allowed to trade into.
+ *
+ * Refuses to touch a season any trade asset references, even a rejected or
+ * cancelled one. Deleting a season cascades to its picks, which would orphan
+ * `trade_assets.draft_pick_id` and silently rewrite history — exactly what the
+ * immutable-ledger design exists to prevent. Returns what it skipped so the
+ * caller can say so out loud.
+ */
+export async function pruneSeasonsBeyondHorizon(
+  db: DbOrTx,
+  opts: { leagueId: number; currentYear: number },
+) {
+  const cutoff = maxScaffoldableYear(opts.currentYear);
+
+  const candidates = await db.query.seasons.findMany({
+    where: and(eq(schema.seasons.leagueId, opts.leagueId), gt(schema.seasons.year, cutoff)),
+  });
+
+  const removed: number[] = [];
+  const kept: Array<{ year: number; reason: string }> = [];
+
+  for (const season of candidates) {
+    const referencing = await db
+      .select({ id: schema.tradeAssets.id })
+      .from(schema.tradeAssets)
+      .leftJoin(schema.draftPicks, eq(schema.draftPicks.id, schema.tradeAssets.draftPickId))
+      .where(
+        or(
+          eq(schema.draftPicks.seasonId, season.id),
+          eq(schema.tradeAssets.seasonId, season.id),
+        ),
+      )
+      .limit(1);
+
+    if (referencing.length > 0) {
+      kept.push({ year: season.year, reason: "a trade references it" });
+      continue;
+    }
+
+    await db.delete(schema.seasons).where(eq(schema.seasons.id, season.id));
+    removed.push(season.year);
+  }
+
+  return { removed, kept, cutoff };
 }

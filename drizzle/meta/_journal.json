@@ -22,6 +22,13 @@
       "when": 1786337150900,
       "tag": "0002_needy_mystique",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786483060764,
+      "tag": "0003_motionless_eternals",
+      "breakpoints": true
     }
   ]
 }

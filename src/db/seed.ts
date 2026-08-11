@@ -7,7 +7,8 @@
  */
 import { and, eq, isNull } from "drizzle-orm";
 
-import { ensureRollingWindow } from "./picks";
+import { ensureRollingWindow, pruneSeasonsBeyondHorizon } from "./picks";
+import { seedDefaultRules } from "./rules-service";
 import * as schema from "./schema";
 import type { DbOrTx } from "./types";
 
@@ -92,9 +93,22 @@ export async function seedLeague(
 
   const seasons = await ensureRollingWindow(db, { leagueId: league.id, currentYear });
 
+  // The horizon shrank to current + next season; drop anything scaffolded
+  // beyond it under the old three-year rule (skips seasons a trade touches).
+  const pruned = await pruneSeasonsBeyondHorizon(db, { leagueId: league.id, currentYear });
+
+  const rules = await seedDefaultRules(db, league.id);
+
   const unlinked = await db.query.teamManagers.findMany({
     where: and(eq(schema.teamManagers.leagueId, league.id), isNull(schema.teamManagers.userId)),
   });
 
-  return { league, seasons, unlinkedSeatCount: unlinked.length };
+  return {
+    league,
+    seasons,
+    unlinkedSeatCount: unlinked.length,
+    prunedSeasons: pruned.removed,
+    keptSeasons: pruned.kept,
+    ruleCount: rules.length,
+  };
 }

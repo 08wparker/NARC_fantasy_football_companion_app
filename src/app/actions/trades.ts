@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { db } from "@/db";
+import { findOrCreatePlayerByName } from "@/db/player-service";
 import {
   cancelTrade,
   confirmTrade,
@@ -13,7 +14,7 @@ import {
 } from "@/db/trade-service";
 import type { TradeAssetInput } from "@/db/trade-logic";
 import { requireCommissioner, requireLeagueMembership } from "@/lib/auth/membership";
-import { getLeague } from "@/lib/league";
+import { currentSeasonYear, getLeague } from "@/lib/league";
 
 /**
  * Every action re-authorizes from scratch.
@@ -34,7 +35,10 @@ const assetSchema = z.discriminatedUnion("kind", [
     kind: z.literal("player"),
     fromTeamId: z.number().int(),
     toTeamId: z.number().int(),
-    playerId: z.number().int(),
+    // Either an existing player, or a name to find-or-create. The latter is
+    // what makes backfilling last season possible before any ESPN sync.
+    playerId: z.number().int().optional(),
+    playerName: z.string().min(1).max(120).optional(),
   }),
   z.object({
     kind: z.literal("keeper_right"),
@@ -63,6 +67,7 @@ const createSchema = z.object({
   assets: z.array(assetSchema).min(1),
   agreedOn: z.string().optional().nullable(),
   note: z.string().max(2000).optional().nullable(),
+  backfill: z.boolean().optional(),
 });
 
 export type ActionResult = { ok: true; warnings?: string[] } | { ok: false; error: string };
@@ -78,12 +83,26 @@ export async function logTradeAction(raw: unknown): Promise<ActionResult> {
     const league = await getLeague();
     const input = createSchema.parse(raw);
 
+    // Resolve free-text player names to rows before the ledger sees them.
+    const assets: TradeAssetInput[] = [];
+    for (const a of input.assets) {
+      if (a.kind === "player" && !a.playerId) {
+        if (!a.playerName) throw new Error("A player asset needs a player.");
+        const player = await findOrCreatePlayerByName(db, a.playerName);
+        assets.push({ ...a, playerId: player.id } as TradeAssetInput);
+      } else {
+        assets.push(a as TradeAssetInput);
+      }
+    }
+
     const { warnings } = await createTrade(db, membership, {
       leagueId: league.id,
       loggedByTeamId: input.loggedByTeamId,
-      assets: input.assets as TradeAssetInput[],
+      assets,
       agreedOn: input.agreedOn ? new Date(input.agreedOn) : null,
       note: input.note ?? null,
+      currentYear: currentSeasonYear(),
+      backfill: input.backfill,
     });
 
     revalidatePath("/trades");

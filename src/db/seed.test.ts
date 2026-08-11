@@ -14,7 +14,7 @@ describe("seedLeague", () => {
     ({ db } = await makeTestDb());
   });
 
-  it("creates the league, 12 teams, and a 4-season rolling window", async () => {
+  it("creates the league, 12 teams, and the tradeable-season window", async () => {
     const { league, seasons } = await seedLeague(db, opts);
 
     expect(league.espnLeagueId).toBe("718396");
@@ -24,8 +24,8 @@ describe("seedLeague", () => {
       [...NARC_TEAMS.map((t) => t.abbrev)].sort(),
     );
 
-    // current year plus a 3-year horizon
-    expect(seasons.map((s) => s.year)).toEqual([2026, 2027, 2028, 2029]);
+    // Current plus next only — the league forbids trading picks further out.
+    expect(seasons.map((s) => s.year)).toEqual([2026, 2027]);
   });
 
   it("scaffolds a full pick set per season", async () => {

@@ -242,15 +242,55 @@ export const players = pgTable(
   "players",
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
-    espnPlayerId: integer("espn_player_id").notNull(),
+    /**
+     * Nullable: the commissioner can enter a player by name when backfilling an
+     * old trade, long before (or without ever) running an ESPN sync. Same
+     * principle as team_managers.user_id — the ledger must work standalone, and
+     * ESPN fills in identifiers later by matching on name.
+     */
+    espnPlayerId: integer("espn_player_id"),
     fullName: text("full_name").notNull(),
     defaultPosition: text("default_position"),
     proTeamAbbrev: text("pro_team_abbrev"),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
   },
   (t) => [
+    // Still unique, but Postgres treats NULLs as distinct, so any number of
+    // manually-entered players can coexist un-synced.
     uniqueIndex("players_espn_player_id_uq").on(t.espnPlayerId),
     index("players_full_name_idx").on(t.fullName),
+  ],
+);
+
+/**
+ * The league rulebook, as maintained by the commissioner.
+ *
+ * Deliberately separate from `proposals`. A proposal is a *vote* — a moment in
+ * time with a tally and an outcome. A rule is the current state of the league's
+ * law. Passing a proposal is how a rule usually changes, but the commissioner
+ * also needs to write down rules that predate this app (keeper count, draft
+ * format) without inventing a fake ballot for each one.
+ */
+export const rules = pgTable(
+  "rules",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    leagueId: integer("league_id")
+      .notNull()
+      .references(() => leagues.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    /** Set when a rule came from a passed ballot, so the two stay connected. */
+    sourceProposalId: integer("source_proposal_id").references(() => proposals.id, {
+      onDelete: "set null",
+    }),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("rules_league_sort_idx").on(t.leagueId, t.sortOrder),
+    check("rules_body_not_blank", sql`length(btrim(${t.body})) > 0`),
   ],
 );
 
@@ -586,6 +626,7 @@ export const votes = pgTable(
 /* ──────────────────────────── relations ────────────────────────────────── */
 
 export const leaguesRelations = relations(leagues, ({ many }) => ({
+  rules: many(rules),
   seasons: many(seasons),
   teams: many(teams),
   espnMembers: many(espnMembers),
@@ -726,4 +767,13 @@ export const votesRelations = relations(votes, ({ one }) => ({
 
 export const usersRelations = relations(users, ({ many }) => ({
   managerSeats: many(teamManagers),
+}));
+
+export const rulesRelations = relations(rules, ({ one }) => ({
+  league: one(leagues, { fields: [rules.leagueId], references: [leagues.id] }),
+  sourceProposal: one(proposals, {
+    fields: [rules.sourceProposalId],
+    references: [proposals.id],
+  }),
+  createdBy: one(users, { fields: [rules.createdByUserId], references: [users.id] }),
 }));

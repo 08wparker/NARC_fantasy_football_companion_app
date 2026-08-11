@@ -18,6 +18,7 @@ export type BuilderPick = {
 
 type Row =
   | { key: string; kind: "draft_pick"; fromTeamId: number; toTeamId: number; draftPickId: number | "" }
+  | { key: string; kind: "player"; fromTeamId: number; toTeamId: number; playerName: string }
   | { key: string; kind: "draft_slot_swap"; fromTeamId: number; toTeamId: number; seasonId: number | "" }
   | {
       key: string;
@@ -46,11 +47,15 @@ export function TradeBuilder({
   seasons,
   picks,
   myTeamIds,
+  knownPlayers,
+  isCommissioner,
 }: {
   teams: BuilderTeam[];
   seasons: BuilderSeason[];
   picks: BuilderPick[];
   myTeamIds: number[];
+  knownPlayers: string[];
+  isCommissioner: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -62,6 +67,7 @@ export function TradeBuilder({
   const [loggedByTeamId, setLoggedByTeamId] = useState(defaultFrom);
   const [agreedOn, setAgreedOn] = useState("");
   const [note, setNote] = useState("");
+  const [backfill, setBackfill] = useState(false);
   const [rows, setRows] = useState<Row[]>([
     {
       key: newKey(),
@@ -94,6 +100,8 @@ export function TradeBuilder({
       ...rs,
       kind === "draft_pick"
         ? { key: newKey(), kind, fromTeamId: defaultFrom, toTeamId: defaultTo, draftPickId: "" }
+        : kind === "player"
+          ? { key: newKey(), kind, fromTeamId: defaultFrom, toTeamId: defaultTo, playerName: "" }
         : kind === "draft_slot_swap"
           ? { key: newKey(), kind, fromTeamId: defaultFrom, toTeamId: defaultTo, seasonId: "" }
           : {
@@ -120,6 +128,14 @@ export function TradeBuilder({
           draftPickId: Number(r.draftPickId),
         };
       }
+      if (r.kind === "player") {
+        return {
+          kind: "player" as const,
+          fromTeamId: r.fromTeamId,
+          toTeamId: r.toTeamId,
+          playerName: r.playerName.trim(),
+        };
+      }
       if (r.kind === "draft_slot_swap") {
         return {
           kind: "draft_slot_swap" as const,
@@ -141,11 +157,16 @@ export function TradeBuilder({
       (a) =>
         ("draftPickId" in a && !a.draftPickId) ||
         ("seasonId" in a && !a.seasonId) ||
+        ("playerName" in a && !a.playerName) ||
         !a.fromTeamId ||
         !a.toTeamId,
     );
     if (incomplete) {
       setError("Every row needs both teams and an asset selected.");
+      return;
+    }
+    if (backfill && !agreedOn) {
+      setError("A trade you are recording as already agreed needs the date it happened.");
       return;
     }
 
@@ -155,6 +176,7 @@ export function TradeBuilder({
         assets,
         agreedOn: agreedOn || null,
         note: note || null,
+        backfill,
       });
       if (!result.ok) {
         setError(result.error);
@@ -207,7 +229,9 @@ export function TradeBuilder({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted">Agreed on (optional)</span>
+          <span className="text-xs text-muted">
+            {backfill ? "Date agreed (required)" : "Agreed on (optional)"}
+          </span>
           <input
             type="date"
             className={input}
@@ -215,7 +239,30 @@ export function TradeBuilder({
             onChange={(e) => setAgreedOn(e.target.value)}
           />
         </label>
+
+        {isCommissioner && (
+          <label className="flex items-start gap-2 sm:col-span-1">
+            <input
+              type="checkbox"
+              className="mt-1 accent-[var(--color-accent)]"
+              checked={backfill}
+              onChange={(e) => setBackfill(e.target.checked)}
+            />
+            <span className="text-xs">
+              <span className="block text-foreground">Already agreed</span>
+              <span className="block text-muted">
+                Record a past trade as confirmed, skipping counterparty approval.
+              </span>
+            </span>
+          </label>
+        )}
       </div>
+
+      <datalist id="known-players">
+        {knownPlayers.map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
 
       <div className="space-y-3">
         {rows.map((r) => {
@@ -271,6 +318,19 @@ export function TradeBuilder({
                   </label>
                 )}
 
+                {r.kind === "player" && (
+                  <label className="flex flex-col gap-1 sm:col-span-2">
+                    <span className="text-xs text-muted">Player</span>
+                    <input
+                      className={input}
+                      list="known-players"
+                      placeholder="Type a name, e.g. Bijan Robinson"
+                      value={r.playerName}
+                      onChange={(e) => update(r.key, { playerName: e.target.value })}
+                    />
+                  </label>
+                )}
+
                 {(r.kind === "draft_slot_swap" || r.kind === "keeper_slot") && (
                   <label className="flex flex-col gap-1">
                     <span className="text-xs text-muted">Season</span>
@@ -308,7 +368,7 @@ export function TradeBuilder({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {(["draft_pick", "draft_slot_swap", "keeper_slot"] as const).map((kind) => (
+        {(["draft_pick", "player", "draft_slot_swap", "keeper_slot"] as const).map((kind) => (
           <button
             key={kind}
             onClick={() => addRow(kind)}
@@ -341,10 +401,12 @@ export function TradeBuilder({
           disabled={pending}
           className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-accent/90 disabled:opacity-50 transition-colors"
         >
-          {pending ? "Logging…" : "Log trade"}
+          {pending ? "Saving…" : backfill ? "Record past trade" : "Log trade"}
         </button>
         <p className="text-xs text-muted">
-          This creates a pending trade. Nothing moves until the other side confirms.
+          {backfill
+            ? "Recorded as confirmed immediately, and the audit trail notes you backfilled it."
+            : "This creates a pending trade. Nothing moves until the other side confirms."}
         </p>
       </div>
     </div>

@@ -414,10 +414,13 @@ describe("rebuildDerivedState", () => {
   it("does not touch picks belonging to another season", async () => {
     // A second season in the same league — the realistic case, since a keeper
     // league carries several future drafts at once.
+    // 2028 is the "other season" here; currentYear is set so it stays inside
+    // the one-year trade horizon, since this test is about season scoping in
+    // rebuildDerivedState, not about the trade-horizon rule.
     const other = await ensureSeasonScaffold(db, {
       leagueId: fx.league.id,
       year: 2028,
-      currentYear: 2026,
+      currentYear: 2027,
       draftRounds: 2,
     });
 
@@ -443,10 +446,13 @@ describe("rebuildDerivedState", () => {
   });
 
   it("scopes a slot swap to its own season", async () => {
+    // 2028 is the "other season" here; currentYear is set so it stays inside
+    // the one-year trade horizon, since this test is about season scoping in
+    // rebuildDerivedState, not about the trade-horizon rule.
     const other = await ensureSeasonScaffold(db, {
       leagueId: fx.league.id,
       year: 2028,
-      currentYear: 2026,
+      currentYear: 2027,
       draftRounds: 2,
     });
 

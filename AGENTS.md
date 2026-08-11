@@ -40,12 +40,12 @@ Two environmental facts:
 ```bash
 npm run dev          # dev server
 npm run build        # production build
-npm test             # vitest — 119 tests, all against real Postgres (PGlite/WASM)
+npm test             # vitest — 144 tests, all against real Postgres (PGlite/WASM)
 npm run typecheck    # run `npx next typegen` first on a cold checkout
 npm run verify       # end-to-end checks against a REAL Postgres server
 npm run db:generate  # generate a migration from src/db/schema.ts
 npm run db:migrate   # apply migrations
-npm run db:seed      # idempotent: league, 12 teams, 4 seasons of picks
+npm run db:seed      # idempotent: league, 12 teams, tradeable seasons, rulebook
 npm run db:link      # manager seats from the CLI — see "Onboarding" below
 npm run db:studio    # drizzle studio
 ```
@@ -132,6 +132,28 @@ recompute from the ledger, and you get an identical database.**
   directly reachable, so `proxy.ts` does NOT protect them.
 - **`team_managers.user_id` is nullable.** That is what lets the commissioner
   populate and backfill the entire ledger before anyone else signs up.
+- **Picks exist only for the current and next season.** `FUTURE_SEASON_HORIZON`
+  is 1 because the league forbids trading picks further out. That is the rulebook
+  expressed in the schema: an untradeable pick is never created, so it cannot
+  appear in the trade builder by accident. `pruneSeasonsBeyondHorizon` refuses to
+  delete a season any trade asset references, since the cascade would orphan
+  `trade_assets.draft_pick_id` and silently rewrite history.
+- **Keeper rights cannot be traded alone.** The `keeper_right` enum value stays
+  so historical rows remain readable, but `validateTradeAssets` rejects any new
+  one — the right follows the player.
+- **`players.espn_player_id` is nullable.** The commissioner types a player's
+  name when backfilling an old trade, long before any ESPN sync. Postgres treats
+  NULLs as distinct, so any number of un-synced players coexist under the unique
+  index; a later sync matches on name and fills in the id.
+- **Backfilled trades skip counterparty confirmation.** `createTrade({backfill})`
+  is commissioner-only, requires the real `agreedOn` date, and lands `confirmed`.
+  Two-step confirmation exists to stop one manager unilaterally asserting a
+  trade; it is meaningless for one everybody played out months ago, and chasing
+  eleven people for retroactive approval would mean history never gets entered.
+  The audit trail records that it was backfilled.
+- **`rules` is separate from `proposals`.** A proposal is a vote — a moment with
+  a tally. A rule is the league's current law. Most rules predate this app and
+  have no ballot; `rules.source_proposal_id` links the ones that do.
 - **`users.email` is indexed but NOT unique.** Identity is `clerk_user_id`;
   email is metadata Clerk owns and can change, and two Clerk accounts can share
   an address. A unique index there turns that edge case into a 500 on sign-in.

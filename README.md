@@ -20,6 +20,12 @@ This app is that record:
   where it came from.
 - **Rule votes** — anyone proposes, the commissioner opens the ballot, one vote
   per franchise, with an explicit pass threshold.
+- **The rulebook** — the league's standing rules, editable by the commissioner,
+  alongside whatever is currently up for a vote.
+
+League rules the app actually enforces, rather than just documents: picks are
+tradeable only for the current and next season, and keeper rights cannot move
+without the player.
 
 ESPN is synced in as a read-only mirror for team names and rosters. It is never
 the source of truth for anything draft-related.
@@ -62,7 +68,7 @@ a seat.
 ## Development
 
 ```bash
-npm test          # 119 tests against real Postgres (PGlite/WASM)
+npm test          # 144 tests against real Postgres (PGlite/WASM)
 npm run verify    # end-to-end checks against a real Postgres server
 npm run build
 ```

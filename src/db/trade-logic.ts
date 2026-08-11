@@ -69,12 +69,27 @@ export async function validateTradeAssets(
   db: DbOrTx,
   leagueId: number,
   assets: TradeAssetInput[],
+  opts: { currentYear?: number } = {},
 ): Promise<TradeValidationIssue[]> {
   const issues: TradeValidationIssue[] = [];
 
   if (assets.length === 0) {
     issues.push({ severity: "error", message: "A trade needs at least one asset." });
     return issues;
+  }
+
+  /**
+   * League rule: keeper rights never move on their own — they follow the
+   * player. The enum value survives so any historical row stays readable, but
+   * nothing new can be written with it.
+   */
+  if (assets.some((a) => a.kind === "keeper_right")) {
+    issues.push({
+      severity: "error",
+      message:
+        "Keeper rights cannot be traded separately from the player. Trade the player instead — " +
+        "the keeper right follows them.",
+    });
   }
 
   const participants = participantsOf(assets);
@@ -115,6 +130,16 @@ export async function validateTradeAssets(
       if (!pick) {
         issues.push({ severity: "error", message: `Unknown draft pick ${a.draftPickId}.` });
         continue;
+      }
+
+      // League rule: no trading picks beyond next season. Scaffolding already
+      // stops those picks existing, but a backfilled or hand-built payload
+      // could still reference one, so the rule is checked rather than assumed.
+      if (opts.currentYear !== undefined && pick.season.year > opts.currentYear + 1) {
+        issues.push({
+          severity: "error",
+          message: `${pick.season.year} picks cannot be traded — the league only allows trading the current and next season (${opts.currentYear} and ${opts.currentYear + 1}).`,
+        });
       }
       if (pick.currentOwnerTeamId !== a.fromTeamId) {
         const holder = teamById.get(pick.currentOwnerTeamId)?.abbrev ?? "another team";
