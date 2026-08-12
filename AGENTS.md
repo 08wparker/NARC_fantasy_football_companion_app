@@ -131,11 +131,21 @@ recompute from the ledger, and you get an identical database.**
 - `src/db/picks.ts` — season scaffolding and the trade horizon
 - `src/db/queries.ts` — draft board (snake math), provenance, history
 - `src/lib/espn/{client,sync}.ts` — the mirror
+- `src/lib/espn/draft.ts` — draft recap, read live from ESPN and cached
 - `src/lib/auth/membership.ts` — the single authorization entry point
 - `src/proxy.ts` — Clerk middleware (Next 16 renamed `middleware.ts`)
 
 ### Rules that are load-bearing
 
+- **The draft *recap* is not mirrored, unlike everything else from ESPN.**
+  `/draft-results` fetches `mDraftDetail` live and caches it (`unstable_cache`,
+  1 hour) instead of writing a table. A completed draft is immutable, so there
+  is nothing for the ledger to contradict and a mirror table could only ever be
+  a copy. Note the naming: **draft board = who owns which future pick** (the
+  ledger), **draft results = what was actually drafted** (history). This is also
+  the app's only render-time ESPN consumer, so every failure mode there degrades
+  to a `Callout` — a public page must not 500 because ESPN is down or the
+  cookies rotted.
 - **`trade_assets` rows are immutable.** There is no edit path. Corrections are
   status transitions (`voided`/`rejected`/`cancelled`), each writing a
   `trade_events` row that stays visible forever. This is the whole point when

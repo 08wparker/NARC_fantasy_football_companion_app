@@ -125,11 +125,45 @@ const teamSchema = z
   })
   .loose();
 
+/**
+ * One completed draft selection.
+ *
+ * `teamId` is the ESPN team id, not our internal one. `keeper` is what ESPN
+ * marks when the pick was consumed by a keeper rather than actually drafted;
+ * `reservedForKeeper` is the pre-draft intent and goes false once the draft
+ * runs, so it is the wrong field to render.
+ */
+const draftPickSchema = z
+  .object({
+    id: z.number().optional(),
+    playerId: z.number(),
+    teamId: z.number(),
+    roundId: z.number(),
+    roundPickNumber: z.number(),
+    overallPickNumber: z.number(),
+    keeper: z.boolean().optional(),
+    bidAmount: z.number().optional(),
+  })
+  .loose();
+
+const draftDetailSchema = z
+  .object({
+    drafted: z.boolean().optional(),
+    inProgress: z.boolean().optional(),
+    completeDate: z.number().optional(),
+    picks: z.array(draftPickSchema).optional(),
+  })
+  .loose();
+
+export type EspnDraftPick = z.infer<typeof draftPickSchema>;
+
 export const leagueResponseSchema = z
   .object({
     id: z.number().optional(),
     seasonId: z.number().optional(),
     status: statusSchema.optional(),
+    // Only populated when the mDraftDetail view is requested.
+    draftDetail: draftDetailSchema.optional(),
     settings: z
       .object({
         name: z.string().optional(),
@@ -261,6 +295,72 @@ export async function fetchTransactions(opts: {
   }
 
   return all;
+}
+
+const playerInfoSchema = z
+  .object({
+    players: z
+      .array(
+        z
+          .object({
+            id: z.number(),
+            player: z
+              .object({
+                fullName: z.string().optional(),
+                defaultPositionId: z.number().optional(),
+                proTeamId: z.number().optional(),
+              })
+              .loose()
+              .optional(),
+          })
+          .loose(),
+      )
+      .optional(),
+  })
+  .loose();
+
+export type EspnPlayerInfo = { fullName: string | null; defaultPositionId?: number };
+
+/**
+ * Names for a set of player ids.
+ *
+ * Draft picks carry only a `playerId`, and a historical draft is full of
+ * players nobody rosters today — so the roster views cannot resolve them. This
+ * is the only view that will look up an arbitrary id.
+ *
+ * Chunked because `filterIds` is a query-shaped header: ESPN has no documented
+ * ceiling, and a silently truncated response would render as missing names
+ * rather than an error.
+ */
+export async function fetchPlayerInfo(opts: {
+  leagueId: string;
+  year: number;
+  playerIds: number[];
+  credentials?: EspnCredentials | null;
+  chunkSize?: number;
+}): Promise<Map<number, EspnPlayerInfo>> {
+  const byId = new Map<number, EspnPlayerInfo>();
+  const ids = [...new Set(opts.playerIds)];
+  const chunkSize = opts.chunkSize ?? 100;
+
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    const payload = await get(`/seasons/${opts.year}/segments/0/leagues/${opts.leagueId}`, {
+      credentials: opts.credentials,
+      searchParams: { view: "kona_player_info" },
+      fantasyFilter: { players: { filterIds: { value: chunk } } },
+    });
+
+    const parsed = playerInfoSchema.parse(payload);
+    for (const entry of parsed.players ?? []) {
+      byId.set(entry.id, {
+        fullName: entry.player?.fullName ?? null,
+        defaultPositionId: entry.player?.defaultPositionId,
+      });
+    }
+  }
+
+  return byId;
 }
 
 /** Seasons ESPN itself says exist, plus the requested one. Never guess years. */
