@@ -20,6 +20,7 @@ import {
   fetchLeague,
   fetchPlayerInfo,
 } from "./client";
+import { keeperRound } from "../keepers";
 import { positionName } from "./positions";
 
 export type DraftPickRow = {
@@ -30,7 +31,10 @@ export type DraftPickRow = {
   playerId: number;
   playerName: string | null;
   position: string | null;
+  /** Was this pick consumed by a keeper rather than actually drafted? */
   keeper: boolean;
+  /** Round this player can be kept in next season; null when ineligible. */
+  keeperRound: number | null;
 };
 
 export type DraftTeamGroup = {
@@ -44,7 +48,6 @@ export type DraftRecap = {
   year: number;
   drafted: boolean;
   completeDate: number | null;
-  availableYears: number[];
   teams: DraftTeamGroup[];
   pickCount: number;
   keeperCount: number;
@@ -54,6 +57,17 @@ export type DraftRecap = {
 /** How long a recap stays cached. A finished draft never changes; this is only
  *  short enough that the *current* season's draft appears the day it happens. */
 const RECAP_TTL_SECONDS = 3600;
+
+/**
+ * Bump this whenever the shape of `DraftRecap` changes.
+ *
+ * The data cache outlives deployments, so new code will happily read an object
+ * written by old code. Adding `keeperRound` without bumping this served rows
+ * with the field missing for an hour, and `ordinal(undefined)` rendered "?" all
+ * over the page. The version is part of the cache key, so a bump is an instant
+ * invalidation.
+ */
+const RECAP_SHAPE_VERSION = "v2-keeper-round";
 
 function teamLabel(team: { abbrev?: string; name?: string; id: number }) {
   const name = team.name?.trim();
@@ -89,6 +103,9 @@ export function buildDraftRecap(
         playerName: info?.fullName ?? null,
         position: positionName(info?.defaultPositionId),
         keeper: p.keeper === true,
+        // Based on the round the player OCCUPIED, so a keeper escalates from
+        // where he was kept, not from where he was originally drafted.
+        keeperRound: keeperRound(p.roundId),
       };
     })
     .sort((a, b) => a.overall - b.overall);
@@ -123,9 +140,6 @@ export function buildDraftRecap(
     year,
     drafted: detail?.drafted === true && rows.length > 0,
     completeDate: detail?.completeDate ?? null,
-    availableYears: [
-      ...new Set([...(response.status?.previousSeasons ?? []), year]),
-    ].sort((a, b) => b - a),
     teams,
     pickCount: rows.length,
     keeperCount: rows.filter((r) => r.keeper).length,
@@ -153,14 +167,30 @@ export async function loadDraftRecap(leagueId: string, year: number): Promise<Dr
   return buildDraftRecap(year, response, players);
 }
 
-/**
- * Cached read. Keyed on league + year so the season switcher does not refetch a
- * season already viewed this hour.
- */
+/** Cached read for one specific season. */
 export function getDraftRecap(leagueId: string, year: number): Promise<DraftRecap> {
   return unstable_cache(
     () => loadDraftRecap(leagueId, year),
-    ["draft-recap", leagueId, String(year)],
+    ["draft-recap", RECAP_SHAPE_VERSION, leagueId, String(year)],
     { revalidate: RECAP_TTL_SECONDS, tags: ["draft-recap"] },
   )();
+}
+
+/**
+ * The most recent draft that actually happened.
+ *
+ * Only one season matters to this league: the last draft is what sets every
+ * keeper price for the next one. In the offseason the current season exists at
+ * ESPN but has not drafted yet, so fall back a year rather than showing an
+ * empty board. The day the new draft completes, this follows it with no edit.
+ */
+export async function getLatestDraftRecap(
+  leagueId: string,
+  currentYear: number,
+): Promise<DraftRecap> {
+  const current = await getDraftRecap(leagueId, currentYear);
+  if (current.drafted) return current;
+
+  const previous = await getDraftRecap(leagueId, currentYear - 1);
+  return previous.drafted ? previous : current;
 }

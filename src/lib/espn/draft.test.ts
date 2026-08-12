@@ -132,7 +132,30 @@ describe("buildDraftRecap", () => {
     expect(buildDraftRecap(2026, empty, players).drafted).toBe(false);
   });
 
-  it("offers available years newest first, including the requested one", () => {
-    expect(buildDraftRecap(2025, response(), players).availableYears).toEqual([2025, 2024, 2023]);
+  it("attaches the next-season keeper round to every pick", () => {
+    const recap = buildDraftRecap(2025, response(), players);
+
+    // Round 1 and 2 are inside the top three, so there is no round to charge.
+    expect(recap.teams[0].picks[0]).toMatchObject({ round: 1, keeperRound: null });
+    expect(recap.teams[1].picks[0]).toMatchObject({ round: 1, keeperRound: null });
+    expect(recap.teams[0].picks[1]).toMatchObject({ round: 2, keeperRound: null });
+  });
+
+  it("escalates a keepable round by three", () => {
+    const deep = response({
+      draftDetail: {
+        drafted: true,
+        picks: [
+          { playerId: 100, teamId: 1, roundId: 7, roundPickNumber: 1, overallPickNumber: 73 },
+          { playerId: 300, teamId: 1, roundId: 4, roundPickNumber: 1, overallPickNumber: 37 },
+        ],
+      },
+    } as Partial<EspnLeagueResponse>);
+
+    const picks = buildDraftRecap(2025, deep, players).teams[0].picks;
+    expect(picks.map((p) => [p.round, p.keeperRound])).toEqual([
+      [4, 1],
+      [7, 4],
+    ]);
   });
 });

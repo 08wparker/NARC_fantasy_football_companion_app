@@ -146,6 +146,21 @@ recompute from the ledger, and you get an identical database.**
   the app's only render-time ESPN consumer, so every failure mode there degrades
   to a `Callout` — a public page must not 500 because ESPN is down or the
   cookies rotted.
+- **`/draft-results` shows exactly one season and has no year picker.** Keeper
+  prices depend only on the last draft, so older years are trivia. It resolves
+  the latest *completed* draft (`getLatestDraftRecap`) and follows the new one
+  automatically. A picker built from ESPN's `status.previousSeasons` was removed
+  because that field lists only years *before* the one loaded, so choosing a
+  year made later years disappear.
+- **Bump `RECAP_SHAPE_VERSION` when `DraftRecap`'s shape changes.** It is part of
+  the `unstable_cache` key. The data cache outlives deployments, so without a
+  bump the new code reads objects written by the old code and renders undefined
+  fields — see `.claude/lessons.md`.
+- **The keeper round ladder lives in `src/lib/keepers.ts`,** not in the page.
+  Three rounds better than where the player went, compounding each year he is
+  kept; rounds 1–3 are ineligible (`null`, never floored to 1); undrafted costs
+  a 12th. The rulebook text in `DEFAULT_RULES` states the same rule in prose —
+  change both together.
 - **`trade_assets` rows are immutable.** There is no edit path. Corrections are
   status transitions (`voided`/`rejected`/`cancelled`), each writing a
   `trade_events` row that stays visible forever. This is the whole point when
