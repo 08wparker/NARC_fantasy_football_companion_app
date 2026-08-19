@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { TeamRoster } from "@/db/queries";
+import type { AdpBoard } from "@/lib/adp";
 import type { DraftRecap } from "@/lib/espn/draft";
 import { buildKeeperRosters, priceRosterPlayer, draftPicksByPlayer } from "@/lib/rosters";
 
@@ -167,5 +168,77 @@ describe("buildKeeperRosters", () => {
     const [wfp] = buildKeeperRosters(rosters, null);
     expect(wfp.keepableCount).toBe(0);
     expect(wfp.players.every((p) => p.cost.kind === "unknown")).toBe(true);
+  });
+});
+
+describe("buildKeeperRosters with a draft market", () => {
+  const rosters: TeamRoster[] = [
+    {
+      teamId: 7,
+      espnTeamId: 2,
+      abbrev: "WFP",
+      name: "Sloppy saquons",
+      players: [
+        player({ playerId: 2, espnPlayerId: 200, fullName: "Jauan Jennings" }),
+        player({ playerId: 1, espnPlayerId: 999, fullName: "Waiver Guy" }),
+        player({ playerId: 3, espnPlayerId: 100, fullName: "Ja'Marr Chase" }),
+      ],
+    },
+  ];
+
+  // Jennings costs a 4th and the market has him at pick 18 — round 2 of a
+  // 12-team draft — so keeping him is two rounds of profit.
+  const adp: AdpBoard = {
+    year: 2026,
+    source: "average-draft-position",
+    entries: [
+      { espnPlayerId: 100, pick: 1.4 },
+      { espnPlayerId: 200, pick: 18.2 },
+    ],
+  };
+
+  it("converts the market into a round for the league's size", () => {
+    const [wfp] = buildKeeperRosters(rosters, recap, adp, 12);
+    const jennings = wfp.players.find((p) => p.fullName === "Jauan Jennings")!;
+
+    expect(jennings.adpPick).toBe(18.2);
+    expect(jennings.adpRound).toBe(2);
+    expect(jennings.surplus).toBe(2); // 4th-round keeper, 2nd-round market
+  });
+
+  it("measures no surplus for a player who cannot be kept", () => {
+    const [wfp] = buildKeeperRosters(rosters, recap, adp, 12);
+    const chase = wfp.players.find((p) => p.fullName === "Ja'Marr Chase")!;
+
+    expect(chase.cost.kind).toBe("ineligible");
+    expect(chase.adpRound).toBe(1); // the market still has an opinion
+    expect(chase.surplus).toBeNull(); // but there is no price to compare it to
+  });
+
+  it("leaves a player the market has never heard of unpriced", () => {
+    const [wfp] = buildKeeperRosters(rosters, recap, adp, 12);
+    const waiver = wfp.players.find((p) => p.fullName === "Waiver Guy")!;
+
+    expect(waiver.adpPick).toBeNull();
+    expect(waiver.adpRound).toBeNull();
+    expect(waiver.surplus).toBeNull();
+  });
+
+  it("counts only the keepers that beat their market round", () => {
+    const [wfp] = buildKeeperRosters(rosters, recap, adp, 12);
+    // Jennings (+2). Chase cannot be kept; the waiver add has no market.
+    expect(wfp.bargainCount).toBe(1);
+  });
+
+  it("changes the round with the league size", () => {
+    // Pick 18 is round 2 in a 12-team draft but round 3 in an 8-team one.
+    const [wfp] = buildKeeperRosters(rosters, recap, adp, 8);
+    expect(wfp.players.find((p) => p.fullName === "Jauan Jennings")!.adpRound).toBe(3);
+  });
+
+  it("leaves every market field null when there is no board", () => {
+    const [wfp] = buildKeeperRosters(rosters, recap, null, 12);
+    expect(wfp.players.every((p) => p.adpRound === null && p.surplus === null)).toBe(true);
+    expect(wfp.bargainCount).toBe(0);
   });
 });

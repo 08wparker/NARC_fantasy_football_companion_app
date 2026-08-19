@@ -3,6 +3,8 @@ import { RosterRefreshButton } from "@/components/roster-refresh-button";
 import { db } from "@/db";
 import { latestSeasonWithRosters, rostersForSeason } from "@/db/queries";
 import { getMembership } from "@/lib/auth/membership";
+import { type AdpBoard, type AdpSource } from "@/lib/adp";
+import { getAdpBoard } from "@/lib/espn/adp";
 import { formatDate, ordinal } from "@/lib/describe";
 import { EspnAuthError, EspnError, credentialsFromEnv } from "@/lib/espn/client";
 import { getLatestDraftRecap, type DraftRecap } from "@/lib/espn/draft";
@@ -57,20 +59,30 @@ export default async function CurrentRostersPage() {
   }
 
   const rosters = await rostersForSeason(db, season.id);
+  const rosteredEspnIds = rosters.flatMap((r) =>
+    r.players.map((p) => p.espnPlayerId).filter((id): id is number => id !== null),
+  );
 
   let recap: DraftRecap | null = null;
   let recapError: unknown = null;
+  let adp: AdpBoard | null = null;
   if (hasCredentials) {
-    try {
-      recap = await getLatestDraftRecap(ESPN_LEAGUE_ID, currentSeasonYear());
-    } catch (error) {
-      recapError = error;
+    // Independent reads, and the market is the optional half: a failed ADP
+    // lookup must not cost the page its keeper prices, so they settle apart.
+    const [recapResult, adpResult] = await Promise.allSettled([
+      getLatestDraftRecap(ESPN_LEAGUE_ID, currentSeasonYear()),
+      getAdpBoard(ESPN_LEAGUE_ID, currentSeasonYear(), rosteredEspnIds),
+    ]);
+    if (recapResult.status === "fulfilled") recap = recapResult.value;
+    else recapError = recapResult.reason;
+    if (adpResult.status === "fulfilled" && adpResult.value.entries.length > 0) {
+      adp = adpResult.value;
     }
   }
   // A season ESPN has not drafted yet prices nothing, same as an unreachable one.
   const priced = recap?.drafted ? recap : null;
 
-  const teams = buildKeeperRosters(rosters, priced);
+  const teams = buildKeeperRosters(rosters, priced, adp, league.teamCount);
   const abbrevByEspnTeamId = new Map(teams.map((t) => [t.espnTeamId, t.abbrev]));
   const playerCount = teams.reduce((n, t) => n + t.players.length, 0);
   const keepableCount = teams.reduce((n, t) => n + t.keepableCount, 0);
@@ -129,6 +141,7 @@ export default async function CurrentRostersPage() {
                   <span>
                     {team.players.length} rostered
                     {priced && ` · ${team.keepableCount} keepable`}
+                    {priced && adp && ` · ${team.bargainCount} under ADP`}
                   </span>
                 </span>
               }
@@ -155,6 +168,7 @@ export default async function CurrentRostersPage() {
                           </span>
                         )}
                       </span>
+                      {adp && <AdpCell player={player} source={adp.source} />}
                       <KeeperPrice cost={player.cost} year={keeperYear} />
                     </li>
                   ))}
@@ -174,6 +188,23 @@ export default async function CurrentRostersPage() {
         acquired by trade carries the price his drafting team set. Rosters come from the last ESPN
         sync — refresh to re-pull them.
       </p>
+
+      {adp && (
+        <p className="text-xs text-muted">
+          The middle column is where the {adp.year} market has each player going, converted to a
+          round for a {league.teamCount}-team draft, with the rounds of profit underneath: green{" "}
+          <span className="text-accent/80">+3</span> means keeping him costs three rounds later
+          than his draft slot, amber means the draft is the cheaper way to get him.{" "}
+          {adp.source === "average-draft-position" ? (
+            <>Read from ESPN&rsquo;s average draft position.</>
+          ) : (
+            <>
+              Read from ESPN&rsquo;s PPR draft ranking — a ranking, not a measured ADP, which is
+              what ESPN publishes when it has no draft data to average.
+            </>
+          )}
+        </p>
+      )}
     </Shell>
   );
 }
@@ -209,6 +240,54 @@ function DraftOrigin({
     >
       {pickLabel(player.draftedRound, player.draftedPickInRound ?? 0)}
       {from && <span className="block text-[10px] text-muted/60">{from}</span>}
+    </span>
+  );
+}
+
+/**
+ * Where the market has the player going, as a round, plus what keeping him
+ * saves against that.
+ *
+ * The surplus is the number the decision actually turns on — a 5th-round
+ * keeper who goes in the 2nd is three rounds of profit — so it is rendered
+ * next to the round rather than left for the reader to subtract. It only
+ * appears on a real price: "cannot be kept" has no round to compare, and a
+ * negative surplus (the draft is the cheaper way to get him) is shown plainly
+ * rather than hidden, since that is a keep worth reconsidering.
+ */
+function AdpCell({ player, source }: { player: KeeperRosterPlayer; source: AdpSource }) {
+  const label =
+    source === "average-draft-position"
+      ? `Average draft position ${player.adpPick?.toFixed(1)}`
+      : `ESPN PPR draft rank ${player.adpPick}`;
+
+  if (player.adpRound === null) {
+    return (
+      <span
+        className="w-14 shrink-0 text-right text-xs text-muted/40"
+        title="ESPN ranks this player in no draft format"
+      >
+        —
+      </span>
+    );
+  }
+
+  const surplus = player.surplus;
+  return (
+    <span className="w-14 shrink-0 text-right text-xs tnum" title={label}>
+      <span className="text-muted">{ordinal(player.adpRound)}</span>
+      {surplus !== null && surplus !== 0 && (
+        <span
+          className={`block text-[10px] ${surplus > 0 ? "text-accent/80" : "text-warning/80"}`}
+          title={
+            surplus > 0
+              ? `Keeping him costs ${surplus} round${surplus === 1 ? "" : "s"} later than the market`
+              : `The market has him ${-surplus} round${surplus === -1 ? "" : "s"} later than his keeper price`
+          }
+        >
+          {surplus > 0 ? `+${surplus}` : surplus}
+        </span>
+      )}
     </span>
   );
 }

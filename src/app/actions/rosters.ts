@@ -4,6 +4,7 @@ import { revalidatePath, updateTag } from "next/cache";
 
 import { db } from "@/db";
 import { requireLeagueMembership } from "@/lib/auth/membership";
+import { ADP_CACHE_TAG } from "@/lib/espn/adp";
 import { credentialsFromEnv } from "@/lib/espn/client";
 import { syncSeason } from "@/lib/espn/sync";
 import { ESPN_LEAGUE_ID, currentSeasonYear, getLeague } from "@/lib/league";
@@ -28,10 +29,11 @@ export type RefreshRostersResult =
  * make the mirror *more* current. During a draft everybody needs that, and
  * routing it through one person is the failure mode.
  *
- * The draft recap cache is expired too. Keeper prices on this page are read off
- * the last draft, so a refresh that left an hour-old recap in place would still
- * be showing yesterday's prices — `updateTag` (not `revalidateTag`) because the
- * re-render that follows this action must not be served the stale copy.
+ * The draft recap and ADP caches are expired too. Keeper prices on this page are
+ * read off the last draft and compared against the market, so a refresh that
+ * left either cached would still be showing yesterday's numbers — `updateTag`
+ * (not `revalidateTag`) because the re-render that follows this action must not
+ * be served the stale copy.
  */
 export async function refreshRostersAction(): Promise<RefreshRostersResult> {
   try {
@@ -85,6 +87,9 @@ export async function refreshRostersAction(): Promise<RefreshRostersResult> {
     if (result.status === "failed") throw new Error(result.error ?? "The ESPN sync failed.");
 
     updateTag("draft-recap");
+    // The market moves daily through August, so a refresh that left it cached
+    // would re-render fresh rosters priced against yesterday's ADP.
+    updateTag(ADP_CACHE_TAG);
     revalidatePath("/current-rosters");
     revalidatePath("/draft-results");
 
