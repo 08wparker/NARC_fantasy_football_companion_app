@@ -43,7 +43,7 @@ Two environmental facts:
 ```bash
 npm run dev          # dev server
 npm run build        # production build
-npm test             # vitest — 146 tests, all against real Postgres (PGlite/WASM)
+npm test             # vitest — 182 tests, all against real Postgres (PGlite/WASM)
 npm run typecheck    # run `npx next typegen` first on a cold checkout
 npm run verify       # end-to-end checks against a REAL Postgres server
 npm run espn:check   # are the espn_s2/SWID cookies still good? `-- --year 2025`
@@ -132,6 +132,8 @@ recompute from the ledger, and you get an identical database.**
 - `src/db/queries.ts` — draft board (snake math), provenance, history
 - `src/lib/espn/{client,sync}.ts` — the mirror
 - `src/lib/espn/draft.ts` — draft recap, read live from ESPN and cached
+- `src/lib/keepers.ts` — the keeper round ladder
+- `src/lib/rosters.ts` — pricing a roster against the last draft
 - `src/lib/auth/membership.ts` — the single authorization entry point
 - `src/proxy.ts` — Clerk middleware (Next 16 renamed `middleware.ts`)
 
@@ -142,10 +144,10 @@ recompute from the ledger, and you get an identical database.**
   1 hour) instead of writing a table. A completed draft is immutable, so there
   is nothing for the ledger to contradict and a mirror table could only ever be
   a copy. Note the naming: **draft board = who owns which future pick** (the
-  ledger), **draft results = what was actually drafted** (history). This is also
-  the app's only render-time ESPN consumer, so every failure mode there degrades
-  to a `Callout` — a public page must not 500 because ESPN is down or the
-  cookies rotted.
+  ledger), **draft results = what was actually drafted** (history). It and
+  `/current-rosters` are the only two render-time ESPN consumers, and every
+  failure mode in both degrades to a `Callout` — a public page must not 500
+  because ESPN is down or the cookies rotted.
 - **`/draft-results` shows exactly one season and has no year picker.** Keeper
   prices depend only on the last draft, so older years are trivia. It resolves
   the latest *completed* draft (`getLatestDraftRecap`) and follows the new one
@@ -161,6 +163,27 @@ recompute from the ledger, and you get an identical database.**
   kept; rounds 1–3 are ineligible (`null`, never floored to 1); undrafted costs
   a 12th. The rulebook text in `DEFAULT_RULES` states the same rule in prose —
   change both together.
+- **`/current-rosters` stores nothing.** It joins the roster mirror to the last
+  draft recap at render time, because a keeper price is a pure function of the
+  round the player occupied — persisting it would only create something that can
+  disagree with both sides. Prices are looked up league-wide by ESPN player id,
+  never per team, since keeper rights travel with a traded player.
+- **A roster is the mirror filtered by freshness, not by deletion.**
+  `roster_spots` is upsert-only and never deletes, so a player waived in October
+  still has his row. `rostersForSeason` keeps only rows whose `synced_at` is at
+  or after the season's `last_synced_at` — everything the newest run re-stamped.
+  Deleting instead would mean a dormant season's empty payload could wipe a
+  roster, which is exactly what the never-delete rule exists to prevent.
+- **A missing draft recap renders as "no price", never as "cannot be kept".**
+  `KeeperCost` is a three-way union — a round, ineligible, unknown — because a
+  blank column would be read by the league as a ruling on a player.
+- **Refreshing rosters is open to every manager, unlike `/api/sync`.** A sync is
+  upsert-only against the mirror and never touches the ledger or derived state,
+  so the worst a manager can do is make the mirror more current; on draft day
+  routing that through one person is the failure mode. The action falls back a
+  year when the current season has no rosters at ESPN yet, and it expires the
+  recap cache with `updateTag` (not `revalidateTag`) so the re-render that
+  follows cannot be served stale prices.
 - **`trade_assets` rows are immutable.** There is no edit path. Corrections are
   status transitions (`voided`/`rejected`/`cancelled`), each writing a
   `trade_events` row that stays visible forever. This is the whole point when

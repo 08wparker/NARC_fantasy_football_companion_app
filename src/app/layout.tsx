@@ -21,6 +21,7 @@ const NAV = [
   { href: "/", label: "Home" },
   { href: "/draft-board", label: "Draft board" },
   { href: "/draft-results", label: "Draft results" },
+  { href: "/current-rosters", label: "Current rosters" },
   { href: "/trades", label: "Trades" },
   { href: "/rules", label: "Rules" },
   { href: "/commissioner", label: "Commissioner" },

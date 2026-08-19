@@ -2,7 +2,13 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { rebuildDerivedState } from "@/db/derive";
-import { draftBoard, pickProvenance, picksOwnedByTeam } from "@/db/queries";
+import {
+  draftBoard,
+  latestSeasonWithRosters,
+  pickProvenance,
+  picksOwnedByTeam,
+  rostersForSeason,
+} from "@/db/queries";
 import * as schema from "@/db/schema";
 import { confirmTrade, createTrade } from "@/db/trade-service";
 import type { Db } from "@/db/types";
@@ -196,5 +202,104 @@ describe("picksOwnedByTeam", () => {
     expect(owned).toHaveLength(1);
     expect(owned[0].year).toBe(2027);
     expect(owned[0].picks.map((p) => p.round)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("rosters", () => {
+  let nextEspnPlayerId = 1000;
+
+  async function seedRoster(
+    db: Db,
+    seasonId: number,
+    teamId: number,
+    names: string[],
+    syncedAt?: Date,
+  ) {
+    for (const fullName of names) {
+      const [player] = await db
+        .insert(schema.players)
+        .values({ espnPlayerId: nextEspnPlayerId++, fullName, defaultPosition: "WR" })
+        .returning();
+      await db.insert(schema.rosterSpots).values({
+        seasonId,
+        teamId,
+        playerId: player.id,
+        acquisitionType: "DRAFT",
+        ...(syncedAt ? { syncedAt } : {}),
+      });
+    }
+  }
+
+  it("returns every franchise, including the ones with nobody rostered", async () => {
+    const { db } = await makeTestDb();
+    const fx = await seedTestLeague(db, { year: 2027, rounds: 1 });
+    await seedRoster(db, fx.season.id, fx.team.WFP.id, ["Jauan Jennings", "Ja'Marr Chase"]);
+
+    const rosters = await rostersForSeason(db, fx.season.id);
+    expect(rosters).toHaveLength(12);
+
+    const wfp = rosters.find((r) => r.abbrev === "WFP");
+    expect(wfp?.players.map((p) => p.fullName).sort()).toEqual([
+      "Ja'Marr Chase",
+      "Jauan Jennings",
+    ]);
+    expect(rosters.find((r) => r.abbrev === "HULL")?.players).toEqual([]);
+  });
+
+  it("leaves out players the last sync no longer saw", async () => {
+    const { db } = await makeTestDb();
+    const fx = await seedTestLeague(db, { year: 2027, rounds: 1 });
+
+    // The mirror never deletes, so a player dropped in October keeps his row.
+    // Only what the most recent run re-stamped is still on the roster.
+    await seedRoster(db, fx.season.id, fx.team.WFP.id, ["Dropped Guy"], new Date("2025-10-01"));
+    await seedRoster(db, fx.season.id, fx.team.WFP.id, ["Rostered Guy"], new Date("2025-12-02"));
+    await db
+      .update(schema.seasons)
+      .set({ lastSyncedAt: new Date("2025-12-01") })
+      .where(eq(schema.seasons.id, fx.season.id));
+
+    const rosters = await rostersForSeason(db, fx.season.id);
+    expect(rosters.find((r) => r.abbrev === "WFP")?.players.map((p) => p.fullName)).toEqual([
+      "Rostered Guy",
+    ]);
+  });
+
+  it("finds the newest season that actually has rosters, not merely the newest", async () => {
+    const { db } = await makeTestDb();
+    const fx = await seedTestLeague(db, { year: 2026, rounds: 1 });
+
+    // 2027 exists but ESPN has not reactivated it, so it holds no roster rows.
+    const [next] = await db
+      .insert(schema.seasons)
+      .values({ leagueId: fx.league.id, year: 2027 })
+      .returning();
+    await seedRoster(db, fx.season.id, fx.team.WFP.id, ["Jauan Jennings"]);
+
+    const season = await latestSeasonWithRosters(db, fx.league.id);
+    expect(season?.year).toBe(2026);
+    expect(season?.id).not.toBe(next.id);
+  });
+
+  it("skips a newer season whose rosters are all left over from an older sync", async () => {
+    const { db } = await makeTestDb();
+    const fx = await seedTestLeague(db, { year: 2026, rounds: 1 });
+
+    // 2027 was synced after ESPN stopped reporting rosters for it, so every row
+    // it has is stale. 2026 is still where the live roster lives.
+    const [next] = await db
+      .insert(schema.seasons)
+      .values({ leagueId: fx.league.id, year: 2027, lastSyncedAt: new Date("2026-03-01") })
+      .returning();
+    await seedRoster(db, next.id, fx.team.WFP.id, ["Last Year's Guy"], new Date("2026-01-01"));
+    await seedRoster(db, fx.season.id, fx.team.WFP.id, ["Rostered Guy"], new Date("2026-01-01"));
+
+    expect((await latestSeasonWithRosters(db, fx.league.id))?.year).toBe(2026);
+  });
+
+  it("returns null when nothing has been synced yet", async () => {
+    const { db } = await makeTestDb();
+    const fx = await seedTestLeague(db, { year: 2027, rounds: 1 });
+    expect(await latestSeasonWithRosters(db, fx.league.id)).toBeNull();
   });
 });
