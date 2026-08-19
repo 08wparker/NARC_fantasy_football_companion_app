@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, or } from "drizzle-orm";
 
 import * as schema from "./schema";
 import type { DbOrTx } from "./types";
@@ -252,4 +252,121 @@ export async function allUsers(db: DbOrTx) {
   return db.query.users.findMany({
     orderBy: (u, { asc }) => [asc(u.displayName)],
   });
+}
+
+/* ────────────────────────────── rosters ────────────────────────────────── */
+
+export type RosterPlayer = {
+  playerId: number;
+  espnPlayerId: number | null;
+  fullName: string;
+  position: string | null;
+  acquisitionType: string | null;
+};
+
+export type TeamRoster = {
+  teamId: number;
+  espnTeamId: number;
+  abbrev: string;
+  name: string;
+  players: RosterPlayer[];
+};
+
+/**
+ * Every franchise and who it *currently* rosters, out of the ESPN mirror.
+ *
+ * Two things this has to get right:
+ *
+ * **Dropped players.** The mirror is upsert-only and never deletes, so a player
+ * waived in October still has his `roster_spots` row. Freshness is what
+ * separates the roster from its history: every row the latest sync touched was
+ * stamped `synced_at` after `seasons.last_synced_at` was written, so anything
+ * older is somebody the team no longer holds. Filtering on read rather than
+ * deleting keeps the mirror's never-delete rule intact — an empty payload from
+ * a dormant season still cannot wipe anything out.
+ *
+ * **Empty teams.** All twelve come back whether or not they have players. A
+ * team ESPN reported empty is information ("nobody rostered"), and dropping the
+ * card would make the grid jump around between syncs.
+ */
+export async function rostersForSeason(db: DbOrTx, seasonId: number): Promise<TeamRoster[]> {
+  const season = await db.query.seasons.findFirst({
+    where: eq(schema.seasons.id, seasonId),
+  });
+  if (!season) throw new Error(`Unknown season ${seasonId}`);
+
+  const currentRows = season.lastSyncedAt
+    ? and(
+        eq(schema.rosterSpots.seasonId, seasonId),
+        gte(schema.rosterSpots.syncedAt, season.lastSyncedAt),
+      )
+    : // Never synced through this app (a hand-seeded season, or a test): there
+      // is no run to be stale relative to, so every row still counts.
+      eq(schema.rosterSpots.seasonId, seasonId);
+
+  const [teams, spots] = await Promise.all([
+    db.query.teams.findMany({ where: eq(schema.teams.leagueId, season.leagueId) }),
+    db.query.rosterSpots.findMany({ where: currentRows, with: { player: true } }),
+  ]);
+
+  const byTeam = new Map<number, RosterPlayer[]>();
+  for (const spot of spots) {
+    const list = byTeam.get(spot.teamId) ?? [];
+    list.push({
+      playerId: spot.player.id,
+      espnPlayerId: spot.player.espnPlayerId,
+      fullName: spot.player.fullName,
+      position: spot.player.defaultPosition,
+      acquisitionType: spot.acquisitionType,
+    });
+    byTeam.set(spot.teamId, list);
+  }
+
+  return teams
+    .sort((a, b) => a.espnTeamId - b.espnTeamId)
+    .map((team) => ({
+      teamId: team.id,
+      espnTeamId: team.espnTeamId,
+      abbrev: team.abbrev,
+      name: team.name,
+      players: byTeam.get(team.id) ?? [],
+    }));
+}
+
+/**
+ * The most recent season the mirror actually holds live rosters for.
+ *
+ * Not simply "the current season": ESPN returns a perfectly ordinary 200 for a
+ * year it has not reactivated, with no roster entries at all. Between February
+ * and the reactivation, last season's rosters ARE the current rosters — and
+ * they are what the next draft's keeper prices are read off. Falling back to
+ * the empty current season would show twelve empty cards all offseason, which
+ * is exactly when this page matters most.
+ *
+ * "Holds rosters" uses the same freshness rule as `rostersForSeason`, so a
+ * season whose rows are all left over from an older sync does not shadow an
+ * older season that still has a real roster.
+ */
+export async function latestSeasonWithRosters(db: DbOrTx, leagueId: number) {
+  const populated = await db
+    .select({ seasonId: schema.rosterSpots.seasonId })
+    .from(schema.rosterSpots)
+    .innerJoin(schema.seasons, eq(schema.seasons.id, schema.rosterSpots.seasonId))
+    .where(
+      and(
+        eq(schema.seasons.leagueId, leagueId),
+        or(
+          isNull(schema.seasons.lastSyncedAt),
+          gte(schema.rosterSpots.syncedAt, schema.seasons.lastSyncedAt),
+        ),
+      ),
+    )
+    .groupBy(schema.rosterSpots.seasonId);
+
+  if (populated.length === 0) return null;
+
+  const ids = new Set(populated.map((r) => r.seasonId));
+  const seasons = await seasonsForLeague(db, leagueId);
+  // seasonsForLeague ascends by year, so the last match is the newest.
+  return seasons.filter((s) => ids.has(s.id)).at(-1) ?? null;
 }
