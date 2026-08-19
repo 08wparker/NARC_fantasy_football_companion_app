@@ -43,7 +43,7 @@ Two environmental facts:
 ```bash
 npm run dev          # dev server
 npm run build        # production build
-npm test             # vitest — 182 tests, all against real Postgres (PGlite/WASM)
+npm test             # vitest — 202 tests, all against real Postgres (PGlite/WASM)
 npm run typecheck    # run `npx next typegen` first on a cold checkout
 npm run verify       # end-to-end checks against a REAL Postgres server
 npm run espn:check   # are the espn_s2/SWID cookies still good? `-- --year 2025`
@@ -134,6 +134,7 @@ recompute from the ledger, and you get an identical database.**
 - `src/lib/espn/draft.ts` — draft recap, read live from ESPN and cached
 - `src/lib/keepers.ts` — the keeper round ladder
 - `src/lib/rosters.ts` — pricing a roster against the last draft
+- `src/lib/adp.ts` / `src/lib/espn/adp.ts` — the draft market, and rounds from picks
 - `src/lib/auth/membership.ts` — the single authorization entry point
 - `src/proxy.ts` — Clerk middleware (Next 16 renamed `middleware.ts`)
 
@@ -177,13 +178,30 @@ recompute from the ledger, and you get an identical database.**
 - **A missing draft recap renders as "no price", never as "cannot be kept".**
   `KeeperCost` is a three-way union — a round, ineligible, unknown — because a
   blank column would be read by the league as a ruling on a player.
+- **ESPN's `averageDraftPosition` is only believed when it varies.** Verified
+  against the live API: outside a league context ESPN returns a flat `170.0` for
+  every single player, which one row at a time is indistinguishable from a real
+  ADP and would price the whole league identically. `looksPopulated` checks the
+  spread across the pool and falls back to `draftRanksByRankType.PPR.rank` — a
+  ranking, not a measured ADP, but always populated and explicitly the format
+  this league drafts. The page names which source it got, since the two are not
+  the same quantity.
+- **ADP is fetched by explicit player id, never by pulling ESPN's top-N board.**
+  `filterIds` is the one call shape proven against this private league (it is
+  how the recap resolves names) and it bounds the response to the players
+  actually rostered. The season-wide endpoint ignores `sortDraftRanks` outright,
+  so a board built by sorting would be in whatever order ESPN felt like.
+- **A pick converts to a round by straight division, not snake math.** The snake
+  changes who picks where inside a round, never which round a pick falls in, so
+  `pickToRound` is `ceil(pick / teamCount)` — and it takes the league's real team
+  count rather than assuming twelve.
 - **Refreshing rosters is open to every manager, unlike `/api/sync`.** A sync is
   upsert-only against the mirror and never touches the ledger or derived state,
   so the worst a manager can do is make the mirror more current; on draft day
   routing that through one person is the failure mode. The action falls back a
-  year when the current season has no rosters at ESPN yet, and it expires the
-  recap cache with `updateTag` (not `revalidateTag`) so the re-render that
-  follows cannot be served stale prices.
+  year when the current season has no rosters at ESPN yet, and it expires both
+  the recap and the ADP cache with `updateTag` (not `revalidateTag`) so the
+  re-render that follows cannot be served stale prices.
 - **`trade_assets` rows are immutable.** There is no edit path. Corrections are
   status transitions (`voided`/`rejected`/`cancelled`), each writing a
   `trade_events` row that stays visible forever. This is the whole point when
@@ -319,7 +337,10 @@ Nothing in `npm test` touches the network — `fetchLeague` is mocked. `npm run
 espn:check` is the one thing that makes a real ESPN call: it hits the same
 `fetchLeague` the sync uses, touches no database, and tells you whether the
 cookies still authenticate. Run it first whenever a sync 401s, since expired
-cookies and a genuine sync bug look identical from the UI.
+cookies and a genuine sync bug look identical from the UI. It also reports which
+draft-market field this league gets back — a measured ADP or ESPN's PPR ranking
+— because that question cannot be answered without real cookies against a
+private league.
 
 `src/lib/auth/membership.test.ts` mocks Clerk's `auth()`/`currentUser()` to cover
 the sign-in path. It is worth keeping honest: it found two crashes that only

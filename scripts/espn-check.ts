@@ -12,11 +12,13 @@
  *   npm run espn:check
  *   npm run espn:check -- --year 2025     # is an older season readable?
  */
+import { buildAdpBoard } from "@/lib/espn/adp";
 import {
   credentialsFromEnv,
   EspnAuthError,
   EspnError,
   fetchLeague,
+  fetchPlayerInfo,
 } from "@/lib/espn/client";
 import { currentSeasonYear, ESPN_LEAGUE_ID } from "@/lib/league";
 
@@ -77,6 +79,57 @@ async function main() {
   console.log(`    draft      ${league.settings?.draftSettings?.type ?? "?"}, keeperCount ${league.settings?.draftSettings?.keeperCount ?? "?"}`);
   if (league.status?.latestScoringPeriod !== undefined) {
     console.log(`    scoring pd ${league.status.latestScoringPeriod}`);
+  }
+
+  await reportDraftMarket(year, league);
+}
+
+/**
+ * Does this league actually get ADP back?
+ *
+ * /current-rosters prices every keeper against the market, and ESPN has two
+ * fields for it: a measured `averageDraftPosition` and a PPR ranking. Outside a
+ * league the first is a flat 170.0 for every player — a sentinel — so the app
+ * only trusts it when it varies, and falls back to the ranking when it does
+ * not. Which one a private league returns can only be answered with real
+ * cookies, which is exactly what this script has, so it answers it here rather
+ * than leaving the column to be diagnosed through the UI.
+ */
+async function reportDraftMarket(
+  year: number,
+  league: Awaited<ReturnType<typeof fetchLeague>>,
+) {
+  const rostered = (league.teams ?? [])
+    .flatMap((team) => team.roster?.entries ?? [])
+    .map((entry) => entry.playerPoolEntry?.player?.id ?? entry.playerId)
+    .filter((id): id is number => typeof id === "number");
+
+  if (rostered.length === 0) {
+    console.log(`\n  draft market: no rostered players in ${year} to price`);
+    return;
+  }
+
+  const players = await fetchPlayerInfo({
+    leagueId: ESPN_LEAGUE_ID,
+    year,
+    playerIds: rostered.slice(0, 100),
+    credentials: credentialsFromEnv(),
+  });
+  const board = buildAdpBoard(year, players);
+
+  console.log(`\n✓ draft market — ${board.entries.length} of ${players.size} players priced`);
+  console.log(
+    `    source     ${board.source}` +
+      (board.source === "ppr-rank"
+        ? "  (ESPN published no varying averageDraftPosition; using its PPR ranking)"
+        : ""),
+  );
+  for (const entry of board.entries.slice(0, 5)) {
+    const info = players.get(entry.espnPlayerId);
+    console.log(
+      `    ${String(entry.pick).padStart(6)}  ${info?.fullName ?? entry.espnPlayerId}` +
+        `   (adp ${info?.averageDraftPosition ?? "—"}, ppr rank ${info?.pprRank ?? "—"})`,
+    );
   }
 }
 

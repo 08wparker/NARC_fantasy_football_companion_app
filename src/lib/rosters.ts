@@ -15,6 +15,7 @@
  * ineligible, undrafted, ESPN unreachable — are testable directly.
  */
 import type { RosterPlayer, TeamRoster } from "@/db/queries";
+import { type AdpBoard, keeperSurplus, pickToRound } from "@/lib/adp";
 import type { DraftPickRow, DraftRecap } from "@/lib/espn/draft";
 import { UNDRAFTED_KEEPER_ROUND, keeperRound } from "@/lib/keepers";
 
@@ -40,12 +41,19 @@ export type KeeperRosterPlayer = RosterPlayer & {
   /** Who drafted him. Differs from the roster team when he has been traded. */
   draftedByEspnTeamId: number | null;
   cost: KeeperCost;
+  /** Where the market has him going, as an overall pick, and as a round. */
+  adpPick: number | null;
+  adpRound: number | null;
+  /** Rounds the keeper price sits later than the market. Positive is a bargain. */
+  surplus: number | null;
 };
 
 export type KeeperRoster = Omit<TeamRoster, "players"> & {
   players: KeeperRosterPlayer[];
   /** How many of them may actually be kept. */
   keepableCount: number;
+  /** Keepable players whose price is later than where the market has them. */
+  bargainCount: number;
 };
 
 /** Last draft indexed by player, so every roster can be priced in one pass. */
@@ -71,7 +79,23 @@ export function draftPicksByPlayer(recap: DraftRecap): Map<number, DraftPickRow>
 export function priceRosterPlayer(
   player: RosterPlayer,
   picks: Map<number, DraftPickRow> | null,
+  market: { byPlayer: Map<number, number>; teamCount: number } | null = null,
 ): KeeperRosterPlayer {
+  const adpPick =
+    market && player.espnPlayerId !== null
+      ? (market.byPlayer.get(player.espnPlayerId) ?? null)
+      : null;
+  const adpRound = adpPick !== null && market ? pickToRound(adpPick, market.teamCount) : null;
+
+  const withMarket = (priced: Omit<KeeperRosterPlayer, "adpPick" | "adpRound" | "surplus">) => ({
+    ...priced,
+    adpPick,
+    adpRound,
+    // Only a real price has surplus to measure. "Ineligible" is not a round you
+    // can compare against the market, and "unknown" is not a number at all.
+    surplus: priced.cost.kind === "round" ? keeperSurplus(priced.cost.round, adpRound) : null,
+  });
+
   const base = {
     ...player,
     draftedRound: null,
@@ -80,22 +104,22 @@ export function priceRosterPlayer(
     draftedByEspnTeamId: null,
   };
 
-  if (!picks) return { ...base, cost: { kind: "unknown" } };
+  if (!picks) return withMarket({ ...base, cost: { kind: "unknown" } });
 
   // A player the commissioner typed in by hand has no ESPN id yet, so there is
   // nothing to look him up by. That is unknown, not undrafted.
-  if (player.espnPlayerId === null) return { ...base, cost: { kind: "unknown" } };
+  if (player.espnPlayerId === null) return withMarket({ ...base, cost: { kind: "unknown" } });
 
   const pick = picks.get(player.espnPlayerId);
   if (!pick) {
-    return {
+    return withMarket({
       ...base,
       cost: { kind: "round", round: UNDRAFTED_KEEPER_ROUND, undrafted: true },
-    };
+    });
   }
 
   const round = keeperRound(pick.round);
-  return {
+  return withMarket({
     ...base,
     draftedRound: pick.round,
     draftedPickInRound: pick.roundPick,
@@ -105,7 +129,7 @@ export function priceRosterPlayer(
       round === null
         ? { kind: "ineligible", previousRound: pick.round }
         : { kind: "round", round, undrafted: false },
-  };
+  });
 }
 
 /**
@@ -118,12 +142,17 @@ export function priceRosterPlayer(
 export function buildKeeperRosters(
   rosters: TeamRoster[],
   recap: DraftRecap | null,
+  adp: AdpBoard | null = null,
+  teamCount = 12,
 ): KeeperRoster[] {
   const picks = recap ? draftPicksByPlayer(recap) : null;
+  const market = adp
+    ? { byPlayer: new Map(adp.entries.map((e) => [e.espnPlayerId, e.pick])), teamCount }
+    : null;
 
   return rosters.map((roster) => {
     const players = roster.players
-      .map((p) => priceRosterPlayer(p, picks))
+      .map((p) => priceRosterPlayer(p, picks, market))
       .sort(
         (a, b) =>
           (a.draftedRound ?? Number.POSITIVE_INFINITY) -
@@ -136,6 +165,7 @@ export function buildKeeperRosters(
       ...roster,
       players,
       keepableCount: players.filter((p) => p.cost.kind === "round").length,
+      bargainCount: players.filter((p) => (p.surplus ?? 0) > 0).length,
     };
   });
 }

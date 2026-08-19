@@ -39,8 +39,13 @@ function response(overrides: Partial<EspnLeagueResponse> = {}): EspnLeagueRespon
 }
 
 const players = new Map<number, EspnPlayerInfo>([
-  [100, { fullName: "Ja'Marr Chase", defaultPositionId: 3 }],
-  [300, { fullName: "Bijan Robinson", defaultPositionId: 2 }],
+  // The draft ranks are irrelevant to a recap — they are what the ADP board
+  // reads off the same lookup — but the shape has to be whole.
+  [100, { fullName: "Ja'Marr Chase", defaultPositionId: 3, pprRank: 1, averageDraftPosition: 1.2 }],
+  [
+    300,
+    { fullName: "Bijan Robinson", defaultPositionId: 2, pprRank: 4, averageDraftPosition: 5.1 },
+  ],
   // 200 deliberately absent — ESPN drops players from old seasons.
 ]);
 

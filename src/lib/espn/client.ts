@@ -297,6 +297,23 @@ export async function fetchTransactions(opts: {
   return all;
 }
 
+/**
+ * Draft market data on a player, as two separate things.
+ *
+ * `draftRanksByRankType` carries an explicit PPR ranking, which is what this
+ * league drafts on. `ownership.averageDraftPosition` is a measured average
+ * draft position — richer when it is real, but verified to come back as a flat
+ * `170.0` for every player on the season-wide `/players` endpoint, so it is
+ * only usable when it actually varies. See `src/lib/adp.ts`.
+ */
+const draftRankSchema = z
+  .object({
+    rank: z.number().optional(),
+    auctionValue: z.number().optional(),
+    published: z.boolean().optional(),
+  })
+  .loose();
+
 const playerInfoSchema = z
   .object({
     players: z
@@ -309,6 +326,17 @@ const playerInfoSchema = z
                 fullName: z.string().optional(),
                 defaultPositionId: z.number().optional(),
                 proTeamId: z.number().optional(),
+                draftRanksByRankType: z
+                  .object({
+                    PPR: draftRankSchema.optional(),
+                    STANDARD: draftRankSchema.optional(),
+                  })
+                  .loose()
+                  .optional(),
+                ownership: z
+                  .object({ averageDraftPosition: z.number().optional() })
+                  .loose()
+                  .optional(),
               })
               .loose()
               .optional(),
@@ -319,7 +347,14 @@ const playerInfoSchema = z
   })
   .loose();
 
-export type EspnPlayerInfo = { fullName: string | null; defaultPositionId?: number };
+export type EspnPlayerInfo = {
+  fullName: string | null;
+  defaultPositionId?: number;
+  /** ESPN's PPR draft rank. Null when ESPN ranks the player in no format. */
+  pprRank: number | null;
+  /** Measured average draft position, or null when ESPN reports none. */
+  averageDraftPosition: number | null;
+};
 
 /**
  * Names for a set of player ids.
@@ -356,6 +391,8 @@ export async function fetchPlayerInfo(opts: {
       byId.set(entry.id, {
         fullName: entry.player?.fullName ?? null,
         defaultPositionId: entry.player?.defaultPositionId,
+        pprRank: entry.player?.draftRanksByRankType?.PPR?.rank ?? null,
+        averageDraftPosition: entry.player?.ownership?.averageDraftPosition ?? null,
       });
     }
   }
